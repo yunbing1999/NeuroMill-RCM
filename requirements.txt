@@ -1,0 +1,7 @@
+numpy
+scipy
+pygame
+dualsense-controller
+xarm-python-sdk
+pyqtgraph
+PyQt5

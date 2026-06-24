@@ -1,0 +1,31 @@
+neuro_final_teleop:
+  ros__parameters:
+    robot_ip: "192.168.1.243"
+    dry_run: false
+    loop_hz: 100.0
+    velocity_watchdog_s: 0.0
+    max_linear_mm_s: 12.0
+    max_depth_mm_s: 2.5
+    tip_lock_max_angular_deg_s: 8.0
+    v7_tip_lock_r3_toggle_enable: true
+    v7_tip_lock_right_stick_control: true
+    v7_tip_lock_tool_frame_control: true
+    v7_use_tool_z_depth_in_free: false
+    v7_use_tool_z_depth_in_tip_lock: true
+    insertion_along_neg_tool_z: false
+    v7_tip_lock_joint_ik_hold_wz: true
+    v7_force_watchdog_zero: true
+    v7_ft_global_stop_enable: true
+    v7_ft_global_soft_slowdown: true
+    v7_ft_allow_retreat_on_limit: true
+    v7_ft_retreat_speed_scale: 0.35
+    v7_ft_retreat_min_cos: 0.10
+    ft_fx_limit_n: 20.0
+    ft_fy_limit_n: 20.0
+    ft_fz_limit_n: 20.0
+    ft_force_norm_limit_n: 60.0
+    ft_torque_norm_limit_nm: 2.0
+    v7_ft_haptic_enable: true
+    v7_ft_haptic_full_scale_n: 50.0
+    v7_ft_haptic_max_trigger_resistance: 0.55
+    v7_motion_haptic_enable: false

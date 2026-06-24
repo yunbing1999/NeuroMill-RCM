@@ -1,0 +1,167 @@
+neuro_final_teleop:
+  ros__parameters:
+    robot_ip: "192.168.1.225"
+    dry_run: false
+    loop_hz: 120.0
+    velocity_watchdog_s: 0.0
+    input_filter_alpha: 0.85
+    input_release_alpha: 1.0
+    v7_deadman_button: circle
+    v7_speed_scale_default: 0.75
+    v7_speed_scale_min: 0.15
+    v7_speed_scale_max: 1.0
+    v7_speed_scale_step: 0.05
+    initial_pose_use_startup: false
+    initial_pose_joint_deg_csv: "40.1,-50,-2.1,60,0.7,110,-1.1"
+    tip_lock_max_angular_deg_s: 6.0
+    v7_tip_lock_r3_toggle_enable: true
+    v7_tip_lock_right_stick_control: true
+    v7_tip_lock_tool_frame_control: true
+    v7_tip_lock_pose_source: sdk_tcp
+    v7_tip_lock_tcp_rotation_comp_enable: false
+    v7_tip_lock_max_linear_mm_s: 14.0
+    v7_tip_lock_correction_gain: 14.0
+    v7_tip_lock_correction_deadband_mm: 0.02
+    v7_tip_lock_recovery_err_mm: 0.45
+    v7_tip_lock_recovery_gain_mm_s_per_mm: 3.0
+    v7_tip_lock_min_angular_scale: 0.0
+    v7_tip_lock_error_brake_enable: true
+    v7_tip_lock_error_brake_mm: 0.30
+    v7_tip_lock_error_brake_exp: 2.5
+    v7_tip_lock_joint_ik_enable: true
+    v7_tip_lock_joint_ik_pos_gain_s: 14.0
+    v7_tip_lock_joint_ik_max_correction_mm_s: 12.0
+    v7_tip_lock_joint_ik_damping: 0.025
+    v7_tip_lock_joint_ik_qdot_limit_rad_s: 0.45
+    v7_tip_lock_joint_ik_qddot_limit_rad_s2: 1.8
+    v7_tip_lock_joint_ik_nullspace_gain: 0.05
+    v7_tip_lock_joint_ik_hold_wz: true
+    max_linear_mm_s: 20.0
+    max_depth_mm_s: 4.0
+    v7_force_watchdog_zero: true
+    v7_use_tool_z_depth_in_free: false
+    v7_use_tool_z_depth_in_tip_lock: true
+    insertion_along_neg_tool_z: false
+    v7_depth_planar_deadband: 0.17
+    v7_ft_global_stop_enable: true
+    v7_ft_global_soft_slowdown: true
+    v7_ft_global_soft_min_scale: 0.15
+    v7_ft_allow_retreat_on_limit: true
+    v7_ft_retreat_speed_scale: 0.45
+    v7_ft_retreat_min_cos: 0.10
+    v7_contact_error_auto_recover: true
+    v7_contact_error_code: 31
+    v7_contact_recovery_cooldown_s: 0.70
+    v7_vc_reject_soft_codes: [1]
+    ft_fx_limit_n: 15.0
+    ft_fy_limit_n: 15.0
+    ft_fz_limit_n: 15.0
+    ft_tx_limit_nm: 8.0
+    ft_ty_limit_nm: 8.0
+    ft_tz_limit_nm: 5.0
+    ft_force_norm_limit_n: 15.0
+    ft_torque_norm_limit_nm: 10.0
+    ft_warning_ratio: 0.85
+    v7_ft_haptic_enable: true
+    v7_haptics_boot_test: false
+    v7_ft_haptic_force_source: norm
+    # Depth-input gating is OFF by default: contact feedback should appear as
+    # soon as the tool/needle touches the object, regardless of whether the
+    # operator is currently holding the trigger.
+    v7_ft_haptic_require_depth_input: false
+    v7_ft_haptic_depth_input_min: 0.05
+    v7_haptic_feedback_gain: 1.12
+    # Default event-pulse minimum was 160 ms; allow shorter taps so the
+    # first-contact acknowledgement can be ~50 ms instead of 160 ms.
+    v7_haptic_event_min_duration_ms: 40
+    # No "starting floor" for proportional output: contact begins from zero
+    # and grows with the force shift, so vibration ramps low->high.
+    v7_contact_min_haptic_ratio: 0.03
+    # Proportional full-scale: force at which the adaptive trigger reaches
+    # maximum continuous-resistance (force=255). Sized so the operator gets
+    # a wide "keep pressing -> keep getting harder" range before saturation,
+    # instead of slamming into the lock at the first real touch.
+    # The 15 N hardware safety stop is still enforced by _apply_global_ft_guard.
+    v7_ft_haptic_full_scale_n: 13.0
+    v7_ft_haptic_full_scale_torque_nm: 7.0
+    v7_ft_haptic_include_torque: false
+    v7_ft_haptic_warn_ratio: 0.0
+    v7_ft_haptic_release_ratio: 0.0
+    v7_ft_haptic_force_alpha: 0.48
+    # Shift gate is the new deadband, so the legacy scalar deadband can be small.
+    v7_ft_haptic_deadband_n: 0.05
+    v7_ft_haptic_torque_deadband_nm: 0.51
+    # Linear force->ratio curve so the operator feels a clean low->high climb
+    # across the whole 0.25 N (touch) ... 5 N (locked) working range.
+    v7_ft_haptic_shape_exp: 0.75
+    # Slightly slower attack than the previous 0.85 floor so the proportional
+    # ramp is a perceptible "growing" instead of a 1-frame snap to target.
+    # 0.65 reaches ~96% of target in ~25 ms at 120 Hz -- fast but still felt.
+    v7_ft_haptic_smooth_alpha: 0.75
+    # Hard-block lock-up is OFF. It used to switch the DualSense trigger from
+    # continuous_resistance to hard_resistance/section_resistance whenever
+    # raw_ratio reached 1.0 -- and that effect switch is exactly what the
+    # operator perceives as the trigger "releasing" at high force. Letting
+    # the proportional path saturate at continuous_resistance(force=255) is
+    # mechanically the same lock-up, but smooth (no effect switch, no release).
+    v7_ft_haptic_hard_block_enable: false
+    v7_ft_haptic_contact_on_ratio: 0.0
+    v7_ft_haptic_contact_off_ratio: 0.002
+    v7_ft_haptic_contact_on_dwell_s: 0.03
+    v7_ft_haptic_contact_off_dwell_s: 0.08
+    v7_ft_haptic_min_contact_feedback: 0.06
+    v7_ft_haptic_max_trigger_resistance: 1.0
+    v7_ft_haptic_trigger_start_position: 0
+    v7_ft_haptic_trigger_end_position: 9
+    v7_ft_haptic_trigger_preload_strength: 1
+    v7_ft_haptic_trigger_max_strength: 8
+    v7_ft_haptic_progressive_trigger_enable: false
+    v7_ft_haptic_auto_tare_enable: true
+    v7_ft_hardware_tare_enable: false
+    # --- Per-channel enable flags so trigger-only vs vibration-only vs both
+    # can be A/B compared during the needle-injection study.
+    v7_ft_haptic_trigger_enable: true
+    v7_ft_haptic_rumble_enable: true
+    v7_ft_haptic_rumble_continuous_enable: false
+    v7_haptic_event_gain: 0.0
+
+    # First-contact tactile acknowledgement: one short rumble pulse on the
+    # rising edge of contact_active, before the proportional loop starts.
+    # Tuned to be a brief tap, not a startle.
+    v7_ft_haptic_contact_pulse_enable: true
+    v7_ft_haptic_contact_pulse_strength: 0.35
+    v7_ft_haptic_contact_pulse_duration_ms: 50
+    v7_ft_haptic_rumble_interval_s: 0.04
+    v7_ft_haptic_vibration_min_ratio: 0.0
+    # Vibration must ramp low->high. min_strength=0 ensures we are truly silent
+    # just after contact, and shape_exp>1 compresses the low-force end so a
+    # light touch barely buzzes while a firm press still drives the rumble up.
+    v7_ft_haptic_rumble_min_strength: 0.0
+    v7_ft_haptic_rumble_max_strength: 0.65
+    v7_ft_haptic_rumble_shape_exp: 1.8
+    v7_ft_haptic_rumble_min_interval_s: 0.06
+    v7_ft_haptic_rumble_max_interval_s: 0.50
+    v7_ft_haptic_rumble_min_duration_ms: 28
+    v7_ft_haptic_rumble_max_duration_ms: 90
+    v7_ft_haptic_release_pulse_enable: false
+    v7_ft_haptic_trigger_vibration_enable: false
+    v7_ft_haptic_debug: false
+    v7_ft_haptic_debug_interval_s: 0.25
+    # --- Shift-from-baseline contact detection: the primary contact gate.
+    # The absolute v7_contact_on/off thresholds remain as a secondary defence
+    # but are not OR'd with the shift gate when this is true.
+    v7_contact_shift_gate_enable: true
+    # Tuned to sit above realistic xArm motion noise: when the arm
+    # accelerates/decelerates with a tool mounted, the FT sensor sees inertial
+    # bumps in the 0.10-0.20 N range. A 0.25 N threshold rejects those while
+    # still firing on a real ~0.3 N+ touch.
+    v7_contact_shift_threshold_n: 0.76  
+    v7_contact_shift_off_threshold_n: 0.38
+    # Dwell long enough that brief motion transients (<100 ms) cannot satisfy
+    # it, but short enough that a real touch is still felt as immediate.
+    # This is the only contact-onset delay (the secondary on_dwell is bypassed
+    # in node.py whenever the shift gate is enabled).
+    v7_contact_shift_dwell_s: 0.05
+    v7_contact_baseline_alpha: 0.003
+    v7_ft_global_include_torque: false
+    v7_motion_haptic_enable: false
