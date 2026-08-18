@@ -47,7 +47,6 @@ def make_controller():
         damping=0.001,
         qdot_limit_rad_s=1.0,
         qddot_limit_rad_s2=100.0,
-        nullspace_gain=0.0,
         shaft_axis_sign=1.0,
     )
 

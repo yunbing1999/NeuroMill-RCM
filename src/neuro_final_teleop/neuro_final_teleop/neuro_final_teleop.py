@@ -68,7 +68,6 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
         self.declare_parameter("v7_rcm_damping", 0.025)
         self.declare_parameter("v7_rcm_qdot_limit_rad_s", 0.40)
         self.declare_parameter("v7_rcm_qddot_limit_rad_s2", 1.50)
-        self.declare_parameter("v7_rcm_nullspace_gain", 0.04)
         self.declare_parameter("v7_rcm_shaft_axis_sign", 1.0)
         self.declare_parameter("v7_rcm_max_angular_deg_s", 5.0)
 
@@ -336,15 +335,6 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
             float(
                 self.get_parameter(
                     "v7_rcm_qddot_limit_rad_s2"
-                ).value
-            ),
-        )
-
-        self.v7_rcm_nullspace_gain = max(
-            0.0,
-            float(
-                self.get_parameter(
-                    "v7_rcm_nullspace_gain"
                 ).value
             ),
         )
@@ -791,9 +781,6 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
                 ),
                 qddot_limit_rad_s2=(
                     self.v7_rcm_qddot_limit_rad_s2
-                ),
-                nullspace_gain=(
-                    self.v7_rcm_nullspace_gain
                 ),
                 shaft_axis_sign=(
                     self.v7_rcm_shaft_axis_sign

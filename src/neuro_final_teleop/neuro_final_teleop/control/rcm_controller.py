@@ -22,8 +22,6 @@ class RCMConfig:
     qdot_limit_rad_s: float = 0.40
     qddot_limit_rad_s2: float = 1.50
 
-    nullspace_gain: float = 0.04
-
     # The xArm tool shaft is assumed to follow the tool Z axis.
     # Use -1.0 if the surgical instrument points along tool -Z.
     shaft_axis_sign: float = 1.0
@@ -214,7 +212,6 @@ class RCMController:
         1. Correct lateral RCM error.
         2. Command insertion along the current shaft.
         3. Follow operator-requested angular velocity.
-        4. Move gently toward a neutral joint posture.
         """
 
         if not self.active or self._entry_point_m is None:
@@ -428,38 +425,6 @@ class RCMController:
             + null_insertion
             @ angular_pinv
             @ angular_residual
-        )
-
-        # -------------------------------------------------------------
-        # Priority 4: gentle neutral-posture preference
-        # -------------------------------------------------------------
-
-        combined_task = np.vstack(
-            (
-                rcm_jacobian,
-                insertion_jacobian,
-                angular_jacobian,
-            )
-        )
-
-        combined_pinv = self._damped_pinv(
-            combined_task,
-            damping,
-        )
-
-        null_all_tasks = (
-            identity_7
-            - combined_pinv @ combined_task
-        )
-
-        posture_velocity = (
-            -float(self.cfg.nullspace_gain)
-            * q
-        )
-
-        qdot = (
-            qdot
-            + null_all_tasks @ posture_velocity
         )
 
         # -------------------------------------------------------------
