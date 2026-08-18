@@ -48,17 +48,17 @@ def generate_launch_description():
         )
     }
 
-    zed_camera_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            [
-                PathJoinSubstitution(
-                    [FindPackageShare("zed_wrapper"), "launch", "zed_camera.launch.py"]
-                )
-            ]
-        ),
-        launch_arguments={"camera_model": camera_model, "publish_tf": "true"}.items(),
-        condition=IfCondition(start_zed),
-    )
+#    zed_camera_launch = IncludeLaunchDescription(
+#        PythonLaunchDescriptionSource(
+#            [
+#                PathJoinSubstitution(
+#                    [FindPackageShare("zed_wrapper"), "launch", "zed_camera.launch.py"]
+#                )
+#            ]
+#        ),
+#        launch_arguments={"camera_model": camera_model, "publish_tf": "true"}.items(),
+#        condition=IfCondition(start_zed),
+#    )
 
     return LaunchDescription(
         [

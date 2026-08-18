@@ -39,7 +39,7 @@ def _import_xarm_api():
 
 from .ft_guard import FTGuard, FTGuardConfig, StalePolicy
 from neuro_final_teleop.input.gamepad import InputConfig, InputSnapshot, XboxInput
-from .kinematics import KDLKinModel
+from .kinematics import (KDLKinModel,load_joint_origins,)
 from .math_utils import clamp, sigmoid_shape
 from .tip_lock_controller import TipLockConfig, TipLockController
 from .safety import (
@@ -59,14 +59,45 @@ class TeleopV4Node(Node):
         self._declare_params()
         self._load_params()
 
+        # Build the kinematic model before connecting to the robot.
+        if self.kinematics_yaml:
+            origins = load_joint_origins(
+                self.kinematics_yaml
+            )
+            self.kin = KDLKinModel(origins)
+
+            self.get_logger().info(
+                "Using calibrated kinematics: "
+                f"{self.kinematics_yaml}"
+            )
+        else:
+            self.kin = KDLKinModel()
+
+            self.get_logger().warning(
+                "No kinematics_yaml provided; "
+                "using nominal xArm7 kinematics"
+            )
+
         if self.dry_run:
             self.get_logger().info("DRY RUN mode -- no robot connection")
             self.arm = _FakeArm()
         else:
             self.get_logger().info(f"Connecting to xArm at {self.robot_ip}")
+            #XArmAPI = _import_xarm_api()
+            #self.arm = XArmAPI(self.robot_ip)
+            #self.arm.motion_enable(True)
             XArmAPI = _import_xarm_api()
             self.arm = XArmAPI(self.robot_ip)
+
+            sim_mode = bool(self.arm.is_simulation_robot)
+            self.get_logger().info(f"Controller simulation mode: {sim_mode}")
+
+            if self.require_simulation_robot and not sim_mode:
+                self.arm.disconnect()
+                raise RuntimeError("Startup blocked: controller is not in Sim mode")
+
             self.arm.motion_enable(True)
+            
             self.arm.clean_error()
             self.arm.clean_warn()
             self.arm.set_mode(0)
@@ -78,8 +109,7 @@ class TeleopV4Node(Node):
             self.arm.set_joint_maxacc(350, is_radian=False)
         self._log_robot_config()
         self._initial_joint_target_deg = self._resolve_initial_joint_target()
-
-        self.kin = KDLKinModel()
+        
         self._constrained_modes_enabled = False
         self._validate_kinematics()
 
@@ -139,7 +169,9 @@ class TeleopV4Node(Node):
     def _declare_params(self):
         P = self.declare_parameter
         P("robot_ip", "192.168.1.243")
+        P("kinematics_yaml", "")
         P("dry_run", False)
+        P("require_simulation_robot", False)
         P("enable_control_timer", True)
         P("loop_hz", 100.0)
         P("velocity_watchdog_s", 0.20)
@@ -225,8 +257,10 @@ class TeleopV4Node(Node):
             "1", "true", "yes", "on",
         )
         self.dry_run = bool(G("dry_run")) or env_dry
+        self.require_simulation_robot = bool(G("require_simulation_robot"))
         self.enable_control_timer = bool(G("enable_control_timer"))
         self.robot_ip = str(G("robot_ip"))
+        self.kinematics_yaml = str(G("kinematics_yaml")).strip()
         self.loop_hz = float(G("loop_hz"))
         self.velocity_watchdog_s = float(G("velocity_watchdog_s"))
         self.sigmoid_gain = float(G("sigmoid_gain"))
@@ -424,6 +458,9 @@ class TeleopV4Node(Node):
         # 8. Transient capture states
         if self.sm.state == TeleopState.TIP_LOCK_CAPTURE:
             self._do_tip_lock_capture()
+            return
+        if self.sm.state == TeleopState.RCM_CAPTURE:
+            self._do_rcm_capture()
             return
 
         # 9. D-pad J7 trim

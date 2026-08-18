@@ -8,7 +8,9 @@ PS5-focused telemanipulation node for experiment:
 
 from typing import Optional, Tuple
 
+import json
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from std_msgs.msg import String
 
 from neuro_final_teleop.control.math_utils import clamp
@@ -17,6 +19,7 @@ from neuro_final_teleop.force_haptics import ForceHapticsMixin
 from neuro_final_teleop.motion_modes import MotionModesMixin
 from neuro_final_teleop.input.dualsense import DualSenseInput, InputConfig as DSInputConfig
 from neuro_final_teleop.control.fixed_point_ik import FixedPointIKConfig, FixedPointIKSolver
+from neuro_final_teleop.control.rcm_controller import RCMConfig, RCMController
 
 
 class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
@@ -57,6 +60,24 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
         self.declare_parameter("v7_tip_lock_joint_ik_qddot_limit_rad_s2", 2.0)
         self.declare_parameter("v7_tip_lock_joint_ik_nullspace_gain", 0.06)
         self.declare_parameter("v7_tip_lock_joint_ik_hold_wz", False)
+        
+        # Remote-center-of-motion controller.
+        self.declare_parameter("v7_rcm_enable", True)
+        self.declare_parameter("v7_rcm_correction_gain_s", 12.0)
+        self.declare_parameter("v7_rcm_max_correction_mm_s", 10.0)
+        self.declare_parameter("v7_rcm_damping", 0.025)
+        self.declare_parameter("v7_rcm_qdot_limit_rad_s", 0.40)
+        self.declare_parameter("v7_rcm_qddot_limit_rad_s2", 1.50)
+        self.declare_parameter("v7_rcm_nullspace_gain", 0.04)
+        self.declare_parameter("v7_rcm_shaft_axis_sign", 1.0)
+        self.declare_parameter("v7_rcm_max_angular_deg_s", 5.0)
+
+        # Keep insertion disabled until rotation-only RCM is validated
+        # on the physical robot.
+        self.declare_parameter("v7_rcm_insertion_enable", False)
+        self.declare_parameter("v7_rcm_max_insertion_mm_s", 5.0)
+
+
         self.declare_parameter("v7_haptic_feedback_gain", 1.0)
         self.declare_parameter("v7_haptics_boot_test", False)
         self.declare_parameter("v7_haptic_event_gain", 1.0)
@@ -269,6 +290,102 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
         self.v7_tip_lock_joint_ik_hold_wz = bool(
             self.get_parameter("v7_tip_lock_joint_ik_hold_wz").value
         )
+
+        self.v7_rcm_enable = bool(
+            self.get_parameter("v7_rcm_enable").value
+        )
+
+        self.v7_rcm_correction_gain_s = max(
+            0.0,
+            float(
+                self.get_parameter(
+                    "v7_rcm_correction_gain_s"
+                ).value
+            ),
+        )
+
+        self.v7_rcm_max_correction_mm_s = max(
+            0.1,
+            float(
+                self.get_parameter(
+                    "v7_rcm_max_correction_mm_s"
+                ).value
+            ),
+        )
+
+        self.v7_rcm_damping = max(
+            1e-6,
+            float(
+                self.get_parameter(
+                    "v7_rcm_damping"
+                ).value
+            ),
+        )
+
+        self.v7_rcm_qdot_limit_rad_s = max(
+            0.01,
+            float(
+                self.get_parameter(
+                    "v7_rcm_qdot_limit_rad_s"
+                ).value
+            ),
+        )
+
+        self.v7_rcm_qddot_limit_rad_s2 = max(
+            0.01,
+            float(
+                self.get_parameter(
+                    "v7_rcm_qddot_limit_rad_s2"
+                ).value
+            ),
+        )
+
+        self.v7_rcm_nullspace_gain = max(
+            0.0,
+            float(
+                self.get_parameter(
+                    "v7_rcm_nullspace_gain"
+                ).value
+            ),
+        )
+
+        shaft_axis_sign = float(
+            self.get_parameter(
+                "v7_rcm_shaft_axis_sign"
+            ).value
+        )
+
+        self.v7_rcm_shaft_axis_sign = (
+            -1.0 if shaft_axis_sign < 0.0 else 1.0
+        )
+
+        self.v7_rcm_max_angular_deg_s = max(
+            0.1,
+            float(
+                self.get_parameter(
+                    "v7_rcm_max_angular_deg_s"
+                ).value
+            ),
+        )
+
+        self.v7_rcm_insertion_enable = bool(
+            self.get_parameter(
+                "v7_rcm_insertion_enable"
+            ).value
+        )
+
+        self.v7_rcm_max_insertion_mm_s = max(
+            0.1,
+            float(
+                self.get_parameter(
+                    "v7_rcm_max_insertion_mm_s"
+                ).value
+            ),
+        )
+
+
+
+
         self.v7_haptic_feedback_gain = float(
             self.get_parameter("v7_haptic_feedback_gain").value
         )
@@ -655,6 +772,42 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
                 hold_wz=self.v7_tip_lock_joint_ik_hold_wz,
             ),
         )
+
+        self._v7_rcm_joint_cmd_rad_s = [0.0] * 7
+        self._v7_last_rcm_debug_s = 0.0
+
+        self._v7_rcm_controller = RCMController(
+            self.kin,
+            RCMConfig(
+                correction_gain_s=(
+                    self.v7_rcm_correction_gain_s
+                ),
+                max_correction_mm_s=(
+                    self.v7_rcm_max_correction_mm_s
+                ),
+                damping=self.v7_rcm_damping,
+                qdot_limit_rad_s=(
+                    self.v7_rcm_qdot_limit_rad_s
+                ),
+                qddot_limit_rad_s2=(
+                    self.v7_rcm_qddot_limit_rad_s2
+                ),
+                nullspace_gain=(
+                    self.v7_rcm_nullspace_gain
+                ),
+                shaft_axis_sign=(
+                    self.v7_rcm_shaft_axis_sign
+                ),
+            ),
+        )
+
+        self._v7_rcm_diag_pub = self.create_publisher(
+            String,
+            "/neuro_final/rcm_diagnostics",
+            10,
+        )
+        self._v7_last_rcm_diag_s = 0.0
+
         if not self.dry_run:
             cfg = DSInputConfig(
                 deadzone=float(self.get_parameter("deadzone").value),
@@ -686,10 +839,17 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
             self.input = DualSenseInput(cfg)
             self.get_logger().info("[V7] PS5 DualSense input layer enabled")
             self._log_dualsense_haptics_status()
+        #self.get_logger().info(
+        #    "[Teleop ready | Circle/R1 deadman | D-pad up/down speed | "
+        #    "Cross fixed-tip toggle | R3 click + right stick fixed-tip | "
+        #    "Square FT tare | L2/R2 depth in free mode"
+        #)
         self.get_logger().info(
-            "[Teleop ready | Circle/R1 deadman | D-pad up/down speed | "
-            "Cross fixed-tip toggle | R3 click + right stick fixed-tip | "
-            "Square FT tare | L2/R2 depth in free mode"
+            "[Teleop ready | Circle/R1 deadman | "
+            "D-pad up/down speed | "
+            "Cross fixed-tip | Options RCM | "
+            "Right stick constrained rotation | "
+            "Square FT tare | L2/R2 depth"
         )
 
         # Live mirror of per-channel haptic enables so the GUI evaluation
@@ -708,6 +868,33 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
         )
         self.add_on_set_parameters_callback(self._on_haptic_eval_parameter_change)
 
+    def _publish_rcm_diagnostics(self, result, desired_w, joints):
+        """Publish RCM measurements at a maximum of 25 Hz."""
+
+        now = self.get_clock().now().nanoseconds / 1e9
+        if now - self._v7_last_rcm_diag_s < 0.04:
+            return
+        self._v7_last_rcm_diag_s = now
+
+        data = {
+            "time_s": now,
+            "entry_mm": result.entry_point_mm,
+            "shaft_mm": result.shaft_point_mm,
+            "error_vector_mm": result.lateral_error_vector_mm,
+            "error_mm": result.lateral_error_mm,
+            "desired_w_rad_s": desired_w,
+            "achieved_w_rad_s": result.angular_rad_s,
+            "joints_rad": list(joints),
+            "qdot_rad_s": result.qdot_rad_s,
+            "insertion_mm_s": result.insertion_mm_s,
+            "limited": result.limited,
+            "mode": int(getattr(self.arm, "mode", -1)),
+            "state": int(getattr(self.arm, "state", -1)),
+        }
+
+        msg = String()
+        msg.data = json.dumps(data, separators=(",", ":"))
+        self._v7_rcm_diag_pub.publish(msg)
 
 TeleopV7Node = NeuroFinalTeleopNode
 
@@ -726,7 +913,7 @@ def main(args=None):
         pass
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.shutdown_hook()

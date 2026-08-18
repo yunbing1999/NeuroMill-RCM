@@ -44,5 +44,12 @@ setup(
             "joint_state_bridge = neuro_final_teleop.nodes.joint_state_bridge:main",
             "session_gui = neuro_final_teleop.nodes.session_gui:main",
         ],
+        "console_scripts": [
+            "neuro_final_teleop = neuro_final_teleop.neuro_final_teleop:main",
+            "ft_bridge = neuro_final_teleop.nodes.ft_bridge:main",
+            "joint_state_bridge = neuro_final_teleop.nodes.joint_state_bridge:main",
+            "session_gui = neuro_final_teleop.nodes.session_gui:main",
+            "rcm_diagnostics_logger = neuro_final_teleop.nodes.rcm_diagnostics_logger:main",
+        ],
     },
 )

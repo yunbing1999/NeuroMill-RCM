@@ -32,7 +32,17 @@ class TeleopState(str, Enum):
     """TCP position held fixed.  Left stick controls orientation around the
     locked tip (planar axes follow ``left_stick_swap_xy`` like FREE).
     NOTE: research prototype — depends on TCP offset calibration."""
+#-------------------------------------------------------------------------
+# new add
+    RCM_CAPTURE = "RCM_CAPTURE"
+    """Transient single-cycle state that captures the current effective
+    tool-tip position as the remote-center entry point. No velocity command
+    is issued while this state is active."""
 
+    RCM_ACTIVE = "RCM_ACTIVE"
+    """Joint-space constrained control that keeps the instrument shaft
+    passing through the captured remote-center entry point."""
+#-------------------------------------------------------------------------
     ALIGN_BUSY = "ALIGN_BUSY"
     """Orthogonal alignment in progress (mode-0 position move).  No
     velocity commands accepted.  Returns to FREE_TELEOP when done."""
@@ -54,6 +64,7 @@ ALLOWED_TRANSITIONS: Dict[TeleopState, Set[TeleopState]] = {
     TeleopState.FREE_TELEOP: {
         TeleopState.IDLE,               # deadman released
         TeleopState.TIP_LOCK_CAPTURE,   # button A
+        TeleopState.RCM_CAPTURE,
         TeleopState.ALIGN_BUSY,         # button Y
         TeleopState.FAULT_LATCHED,      # error
     },
@@ -67,6 +78,17 @@ ALLOWED_TRANSITIONS: Dict[TeleopState, Set[TeleopState]] = {
         TeleopState.FREE_TELEOP,        # button A (unlock)
         TeleopState.IDLE,               # deadman released
         TeleopState.FAULT_LATCHED,      # error
+    },
+    TeleopState.RCM_CAPTURE: {
+        TeleopState.RCM_ACTIVE,         # capture succeeded
+        TeleopState.FREE_TELEOP,        # capture failed or cancelled
+        TeleopState.IDLE,               # deadman released during capture
+        TeleopState.FAULT_LATCHED,      # safety or robot fault
+    },
+    TeleopState.RCM_ACTIVE: {
+        TeleopState.FREE_TELEOP,        # operator disables RCM
+        TeleopState.IDLE,               # deadman released
+        TeleopState.FAULT_LATCHED,      # safety or robot fault
     },
     TeleopState.ALIGN_BUSY: {
         TeleopState.FREE_TELEOP,        # alignment complete
@@ -82,11 +104,13 @@ ALLOWED_TRANSITIONS: Dict[TeleopState, Set[TeleopState]] = {
 MOTION_STATES = frozenset({
     TeleopState.FREE_TELEOP,
     TeleopState.TIP_LOCK_ACTIVE,
+    TeleopState.RCM_ACTIVE,
 })
 
 # States using constrained (coupled lin/ang) control
 CONSTRAINED_STATES = frozenset({
     TeleopState.TIP_LOCK_ACTIVE,
+    TeleopState.RCM_ACTIVE,
 })
 
 

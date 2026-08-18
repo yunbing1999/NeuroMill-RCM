@@ -34,6 +34,8 @@ Joint limits (radians) and axes:
 All seven joints are revolute with local axis [0, 0, 1].
 """
 
+from pathlib import Path
+import yaml
 import math
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -64,6 +66,36 @@ _JOINT_ORIGINS = [
     (0.0,     0.0,     0.0,     math.pi/2,   0.0,  0.0),     # J6: link5 -> link6
     (0.076,   0.097,   0.0,    -math.pi/2,   0.0,  0.0),     # J7: link6 -> link7
 ]
+
+
+def load_joint_origins(yaml_path):
+    """Load seven calibrated joint origins from an xArm YAML file."""
+
+    path = Path(yaml_path)
+
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Kinematics YAML not found: {path}"
+        )
+
+    with path.open() as file:
+        data = yaml.safe_load(file)
+
+    try:
+        kinematics = data["kinematics"]
+        fields = ("x", "y", "z", "roll", "pitch", "yaw")
+
+        return tuple(
+            tuple(
+                float(kinematics[f"joint{i}"][field])
+                for field in fields
+            )
+            for i in range(1, 8)
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid xArm kinematics YAML: {path}"
+        ) from exc
 
 # Source: xarm7.urdf.xacro  (lines 94-280)
 # Each tuple: (lower_rad, upper_rad)
@@ -113,7 +145,27 @@ class KDLKinModel:
     >>> J = model.jacobian([0.0]*7)
     """
 
-    def __init__(self):
+    def __init__(self, joint_origins=None):
+        selected = (
+            _JOINT_ORIGINS
+            if joint_origins is None
+            else joint_origins
+        )
+
+        if len(selected) != NUM_JOINTS:
+            raise ValueError("joint_origins must contain 7 joints")
+
+        # Each model owns an immutable copy.
+        self._joint_origins = tuple(
+            tuple(float(value) for value in origin)
+            for origin in selected
+        )
+
+        if any(len(origin) != 6 for origin in self._joint_origins):
+            raise ValueError(
+                "Each joint origin must contain x, y, z, roll, pitch, yaw"
+            )
+
         self._chain = self._build_chain()
         self._fk_solver = PyKDL.ChainFkSolverPos_recursive(self._chain)
         self._jac_solver = PyKDL.ChainJntToJacSolver(self._chain)
@@ -123,8 +175,7 @@ class KDLKinModel:
 
     # ── Chain construction ────────────────────────────────────────────
 
-    @staticmethod
-    def _build_chain() -> PyKDL.Chain:
+    def _build_chain(self) -> PyKDL.Chain:
         """Build KDL chain using fixed+rotating segment pairs.
 
         URDF convention:  T_joint(q) = F_origin * R(axis, q)
@@ -136,7 +187,7 @@ class KDLKinModel:
         Product: F_origin * R_z(q), which matches the URDF exactly.
         """
         chain = PyKDL.Chain()
-        for i, (x, y, z, roll, pitch, yaw) in enumerate(_JOINT_ORIGINS):
+        for i, (x, y, z, roll, pitch, yaw) in enumerate(self._joint_origins):
             origin_frame = PyKDL.Frame(
                 PyKDL.Rotation.RPY(roll, pitch, yaw),
                 PyKDL.Vector(x, y, z),

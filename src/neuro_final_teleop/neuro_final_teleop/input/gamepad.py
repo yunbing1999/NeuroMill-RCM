@@ -96,8 +96,12 @@ class InputSnapshot:
     btn_b: bool = False
     btn_x: bool = False
     btn_y: bool = False
+    #btn_lb: bool = False
+    #btn_back: bool = False
+    #btn_r3: bool = False
     btn_lb: bool = False
     btn_back: bool = False
+    btn_options: bool = False
     btn_r3: bool = False
 
     # Edge detection: True only on the frame the button was first pressed
@@ -105,8 +109,12 @@ class InputSnapshot:
     b_edge: bool = False
     x_edge: bool = False
     y_edge: bool = False
+    #lb_edge: bool = False
+    #back_edge: bool = False
+    #r3_edge: bool = False
     lb_edge: bool = False
     back_edge: bool = False
+    options_edge: bool = False
     r3_edge: bool = False
 
     # D-pad  (x: -1/0/+1,  y: -1/0/+1)

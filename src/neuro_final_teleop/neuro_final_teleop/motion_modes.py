@@ -41,8 +41,14 @@ class MotionModesMixin:
 
     def _on_state_enter(self, old: TeleopState, new: TeleopState, reason: str):
         super()._on_state_enter(old, new, reason)
-        if new == TeleopState.TIP_LOCK_ACTIVE:
-            self._v7_constrained_settle_until_s = time.monotonic() + self.v7_mode_switch_settle_s
+        #if new == TeleopState.TIP_LOCK_ACTIVE:
+        #    self._v7_constrained_settle_until_s = time.monotonic() + self.v7_mode_switch_settle_s
+        #else:
+        #    self._v7_constrained_settle_until_s = 0.0
+        if new in (TeleopState.TIP_LOCK_ACTIVE, TeleopState.RCM_ACTIVE):
+            self._v7_constrained_settle_until_s = (
+                time.monotonic() + self.v7_mode_switch_settle_s
+            )
         else:
             self._v7_constrained_settle_until_s = 0.0
         self._v7_idle_since_s = 0.0
@@ -198,6 +204,96 @@ class MotionModesMixin:
             and self.sm.state == TeleopState.TIP_LOCK_ACTIVE
             and self.tip_lock.active
         )
+    
+    def _rcm_joint_ik_active(self) -> bool:
+        """Return True while RCM owns joint-space motion."""
+        return (
+            self.v7_rcm_enable
+            and self.sm.state == TeleopState.RCM_ACTIVE
+            and self._v7_rcm_controller.active
+        )
+
+    def _joint_ik_active(self) -> bool:
+        """True when either constrained controller uses mode 4."""
+        return self._tip_lock_joint_ik_active() or self._rcm_joint_ik_active()
+
+    def _vel_rcm_joint_ik(
+        self,
+        inp: InputSnapshot,
+        scale: float,
+        joints_rad: List[float],
+    ) -> List[float]:
+        """Use the right stick to rotate about the captured RCM point."""
+
+        # Hold zero briefly after capture/mode transition.
+        if time.monotonic() < self._v7_constrained_settle_until_s:
+            self._v7_rcm_joint_cmd_rad_s = [0.0] * 7
+            return [0.0] * 6
+
+        rx = 0.0 if abs(inp.rx) < 0.10 else sigmoid_shape(inp.rx, self.sigmoid_gain)
+        ry = 0.0 if abs(inp.ry) < 0.10 else sigmoid_shape(inp.ry, self.sigmoid_gain)
+
+        max_w = math.radians(self.v7_rcm_max_angular_deg_s)
+        speed = max_w * self._v7_speed_scale * scale
+
+        # Right stick commands tool-frame X/Y rotation.
+        local_w = [-rx * speed, ry * speed, 0.0]
+
+        pose = self._effective_tip_pose_mm_deg(joints_rad)
+        if not pose:
+            self._v7_rcm_joint_cmd_rad_s = [0.0] * 7
+            return [0.0] * 6
+
+        R = rpy_deg_to_rotmat(pose[3], pose[4], pose[5])
+        base_w = R @ local_w
+
+        tcp_m = [
+            value * 0.001
+            for value in self._effective_tcp_translation_mm()
+        ]
+
+        try:
+            result = self._v7_rcm_controller.solve(
+                q_rad=joints_rad[:7],
+                desired_angular_rad_s=base_w.tolist(),
+                desired_insertion_m_s=0.0,  # Insertion remains disabled.
+                tcp_offset_m=tcp_m,
+                dt_s=self.dt,
+            )
+        except Exception as exc:
+            self._v7_rcm_joint_cmd_rad_s = [0.0] * 7
+            self._warn_throttle(
+                "rcm_solve",
+                f"[V7][RCM] Solve failed: {exc}",
+                0.5,
+            )
+            return [0.0] * 6
+
+        self._v7_rcm_joint_cmd_rad_s = result.qdot_rad_s
+
+        if hasattr(self, "_publish_rcm_diagnostics"):
+            self._publish_rcm_diagnostics(
+                result,
+                base_w.tolist(),
+                joints_rad[:7],
+            )
+
+        # Keep six-axis values only for existing diagnostics.
+        self._last_cmd_sent = [
+            *result.correction_mm_s,
+            *[math.degrees(w) for w in result.angular_rad_s],
+        ]
+
+        if result.lateral_error_mm > 1.0:
+            self._warn_throttle(
+                "rcm_error",
+                f"[V7][RCM] Entry error: {result.lateral_error_mm:.2f} mm",
+                0.25,
+            )
+
+        # The real command is the stored seven-joint velocity.
+        return [0.0] * 6
+
 
     def _vel_tip_lock_joint_ik(
         self,
@@ -456,12 +552,11 @@ class MotionModesMixin:
         ]
 
     def _desired_control_mode(self) -> int:
-        if self._tip_lock_joint_ik_active():
-            return 4
-        return 5
+        return 4 if self._joint_ik_active() else 5
 
     def _rate_limit_is_constrained(self) -> bool:
-        if self._tip_lock_joint_ik_active():
+        # Joint controllers apply their own acceleration limits.
+        if self._joint_ik_active():
             return False
         return super()._rate_limit_is_constrained()
 
@@ -505,47 +600,98 @@ class MotionModesMixin:
                 is_sync=True,
                 duration=max(self.velocity_watchdog_s, 0.02),
             )
+            #self._v7_last_joint_cmd_rad_s = zero
+            #self._v7_tip_lock_joint_cmd_rad_s = zero
+            #self._v7_fixed_point_ik.reset()
             self._v7_last_joint_cmd_rad_s = zero
             self._v7_tip_lock_joint_cmd_rad_s = zero
+            self._v7_rcm_joint_cmd_rad_s = zero
             self._v7_fixed_point_ik.reset()
         except Exception as exc:
             self._warn_throttle("v7_jik_zero", f"[V7][JIK] zero failed ({reason}): {exc}", 0.5)
 
     def _send_velocity(self, cmd: List[float]):
-        if not self._tip_lock_joint_ik_active():
+        """Send Cartesian or joint velocity for the active controller."""
+
+        if not self._joint_ik_active():
             if self._v7_joint_velocity_active:
                 self._v7_joint_velocity_active = False
                 self._current_mode = None
             return super()._send_velocity(cmd)
 
         if not self._ensure_mode4():
-            self._warn_throttle("v7_jik_mode", f"[V7][JIK] joint velocity skip: mode={self.arm.mode} state={self.arm.state}", 0.4)
+            self._warn_throttle(
+                "joint_mode",
+                "[V7] Joint command skipped: mode 4 unavailable",
+                0.4,
+            )
             return
+
+        # Select the joint command produced during this control cycle.
+        if self._rcm_joint_ik_active():
+            source = self._v7_rcm_joint_cmd_rad_s
+        else:
+            source = self._v7_tip_lock_joint_cmd_rad_s
+
+        # Apply the existing force/torque safety scale.
         ft_scale = self._joint_ft_scale()
-        qdot = [float(v) * ft_scale for v in self._v7_tip_lock_joint_cmd_rad_s[:7]]
+        qdot = [float(v) * ft_scale for v in source[:7]]
+
         if max(abs(v) for v in qdot) < 1e-5:
             qdot = [0.0] * 7
+
         ret = self.arm.vc_set_joint_velocity(
             qdot,
             is_radian=True,
             is_sync=False,
             duration=self.velocity_watchdog_s,
         )
+
         if isinstance(ret, int) and ret != 0:
-            self._warn_throttle("v7_jik_send", f"[V7][JIK] vc_set_joint_velocity failed code={ret}", 0.25)
-            self._send_joint_zero("send_fail")
+            self._warn_throttle(
+                "joint_send",
+                f"[V7] Joint velocity failed: code={ret}",
+                0.25,
+            )
+            self._send_joint_zero("send_failure")
             return
+
         self._v7_joint_velocity_active = True
         self._v7_last_joint_cmd_rad_s = qdot
 
     def _on_state_exit(self, old: TeleopState, new: TeleopState, reason: str):
-        if old == TeleopState.TIP_LOCK_ACTIVE and self.v7_tip_lock_joint_ik_enable:
+        leaving_joint_mode = (
+            old == TeleopState.RCM_ACTIVE
+            or (
+                old == TeleopState.TIP_LOCK_ACTIVE
+                and self.v7_tip_lock_joint_ik_enable
+            )
+        )
+
+        if leaving_joint_mode:
+            # Stop mode-4 motion before clearing controller state.
             self._send_joint_zero(f"exit_{old.value}")
             self._v7_joint_velocity_active = False
             self._current_mode = None
-        if old == TeleopState.TIP_LOCK_ACTIVE and new != TeleopState.TIP_LOCK_ACTIVE:
+
+        if (
+            old == TeleopState.TIP_LOCK_ACTIVE
+            and new != TeleopState.TIP_LOCK_ACTIVE
+        ):
             self._v7_tip_lock_started_by_r3 = False
-        super()._on_state_exit(old, new, reason)
+
+        if (
+            old == TeleopState.RCM_ACTIVE
+            and new != TeleopState.RCM_ACTIVE
+        ):
+            self._v7_rcm_joint_cmd_rad_s = [0.0] * 7
+            self._v7_rcm_controller.reset()
+
+        super()._on_state_exit(
+            old,
+            new,
+            reason,
+        )
 
     def _compute_velocity(self, inp: InputSnapshot, scale: float, joints_rad: List[float]) -> List[float]:
         st = self.sm.state
@@ -561,13 +707,23 @@ class MotionModesMixin:
             return self._apply_global_ft_guard(cmd)
         if not (st == TeleopState.TIP_LOCK_ACTIVE and operator_idle):
             self._v7_idle_since_s = 0.0
+        #if st == TeleopState.FREE_TELEOP:
+        #    cmd = self._vel_free_teleop(inp, scale, joints_rad)
+        #elif st == TeleopState.TIP_LOCK_ACTIVE:
+        #    cmd = self._vel_tip_lock(inp, scale, joints_rad)
+        #else:
+        #    cmd = [0.0] * 6
         if st == TeleopState.FREE_TELEOP:
             cmd = self._vel_free_teleop(inp, scale, joints_rad)
         elif st == TeleopState.TIP_LOCK_ACTIVE:
             cmd = self._vel_tip_lock(inp, scale, joints_rad)
+        elif st == TeleopState.RCM_ACTIVE:
+            cmd = self._vel_rcm_joint_ik(inp, scale, joints_rad)
         else:
             cmd = [0.0] * 6
-        if st != TeleopState.TIP_LOCK_ACTIVE:
+        #if st != TeleopState.TIP_LOCK_ACTIVE:
+        #    cmd = self._apply_v7_speed_scale(cmd)
+        if st not in (TeleopState.TIP_LOCK_ACTIVE, TeleopState.RCM_ACTIVE):
             cmd = self._apply_v7_speed_scale(cmd)
         self._update_ft_force_haptics(inp)
         self._update_motion_haptics(cmd, inp)
@@ -593,11 +749,132 @@ class MotionModesMixin:
         )
         self._pulse_haptic(1.0, 180, 0.0)
         self.sm.transition_to(TeleopState.TIP_LOCK_ACTIVE, "tip_captured")
+    
+    def _do_rcm_capture(self):
+        """Capture the current effective tool tip as the RCM entry point."""
+
+        try:
+            code_j, joints = self.arm.get_servo_angle(
+                is_radian=True
+            )
+        except Exception as exc:
+            self._warn_throttle(
+                "rcm_capture_joint_exception",
+                f"[V7][RCM] Joint read exception: {exc}",
+                0.5,
+            )
+            self.sm.transition_to(
+                TeleopState.FREE_TELEOP,
+                "rcm_capture_joint_exception",
+            )
+            return
+
+        if (
+            code_j != 0
+            or not joints
+            or len(joints) < 7
+        ):
+            self._warn_throttle(
+                "rcm_capture_joint_failure",
+                "[V7][RCM] Capture failed: joints unavailable",
+                0.5,
+            )
+            self.sm.transition_to(
+                TeleopState.FREE_TELEOP,
+                "rcm_capture_joint_failure",
+            )
+            return
+
+        tcp_offset_m = [
+            float(value) * 0.001
+            for value
+            in self._effective_tcp_translation_mm()
+        ]
+
+        captured = self._v7_rcm_controller.capture(
+            [float(value) for value in joints[:7]],
+            tcp_offset_m,
+        )
+
+        if not captured:
+            self._warn_throttle(
+                "rcm_capture_failure",
+                "[V7][RCM] Entry-point capture failed",
+                0.5,
+            )
+            self.sm.transition_to(
+                TeleopState.FREE_TELEOP,
+                "rcm_capture_failure",
+            )
+            return
+
+        entry = self._v7_rcm_controller.entry_point_m
+        axis = self._v7_rcm_controller.captured_axis
+
+        if entry is None or axis is None:
+            self._v7_rcm_controller.reset()
+            self.sm.transition_to(
+                TeleopState.FREE_TELEOP,
+                "rcm_capture_invalid_result",
+            )
+            return
+
+        self._v7_rcm_joint_cmd_rad_s = [0.0] * 7
+        self._v7_last_joint_cmd_rad_s = [0.0] * 7
+
+        self.get_logger().info(
+            "[V7][RCM] Entry captured at "
+            f"({entry[0] * 1000.0:.1f},"
+            f"{entry[1] * 1000.0:.1f},"
+            f"{entry[2] * 1000.0:.1f}) mm | "
+            "shaft axis="
+            f"({axis[0]:+.3f},"
+            f"{axis[1]:+.3f},"
+            f"{axis[2]:+.3f})"
+        )
+
+        self._pulse_haptic(
+            1.0,
+            180,
+            0.0,
+        )
+
+        self.sm.transition_to(
+            TeleopState.RCM_ACTIVE,
+            "rcm_entry_captured",
+        )
+
     def _handle_button_actions(self, inp: InputSnapshot):
         st = self.sm.state
+
         if st == TeleopState.FREE_TELEOP:
+            # Options enters RCM capture.
+            if (
+                self.v7_rcm_enable
+                and getattr(inp, "options_edge", False)
+            ):
+                if not self._constrained_modes_enabled:
+                    self._warn_throttle(
+                        "v7_rcm_kinematics_not_validated",
+                        "[V7][RCM] Capture blocked: "
+                        "kinematic model not validated",
+                        1.0,
+                    )
+                    return
+
+                self._v7_tip_lock_started_by_r3 = False
+
+                self.sm.transition_to(
+                    TeleopState.RCM_CAPTURE,
+                    "v7_options_rcm_capture",
+                )
+                return
+
+            # Square performs FT tare.
             if inp.x_edge:
                 self._tare_sensor_action()
+
+            # L1 moves to the initial pose.
             elif inp.lb_edge:
                 if not self.enable_initial_pose_action:
                     self._warn_throttle(
@@ -606,22 +883,65 @@ class MotionModesMixin:
                         1.0,
                     )
                     return
+
                 self._start_initial_pose()
-            elif self.v7_tip_lock_r3_toggle_enable and getattr(inp, "r3_edge", False):
+
+            # Keep the existing R3 Tip Lock behavior unchanged.
+            elif (
+                self.v7_tip_lock_r3_toggle_enable
+                and getattr(inp, "r3_edge", False)
+            ):
                 if not self._constrained_modes_enabled:
-                    self._warn_throttle("v7_kin_nv", "[V7] R3 fixed-tip blocked: kinematic model not validated", 1.0)
+                    self._warn_throttle(
+                        "v7_kin_nv",
+                        "[V7] R3 fixed-tip blocked: "
+                        "kinematic model not validated",
+                        1.0,
+                    )
                     return
+
                 self._v7_tip_lock_started_by_r3 = True
-                self.sm.transition_to(TeleopState.TIP_LOCK_CAPTURE, "v7_r3_click_fixed_tip")
+
+                self.sm.transition_to(
+                    TeleopState.TIP_LOCK_CAPTURE,
+                    "v7_r3_click_fixed_tip",
+                )
+
+            # Cross enters Tip Lock.
             elif inp.a_edge:
                 if not self._constrained_modes_enabled:
-                    self._warn_throttle("v7_kin_nv", "[V7] Fixed-tip blocked: kinematic model not validated", 1.0)
+                    self._warn_throttle(
+                        "v7_kin_nv",
+                        "[V7] Fixed-tip blocked: "
+                        "kinematic model not validated",
+                        1.0,
+                    )
                     return
+
                 self._v7_tip_lock_started_by_r3 = False
-                self.sm.transition_to(TeleopState.TIP_LOCK_CAPTURE, "v7_btn_cross_fixed_tip")
+
+                self.sm.transition_to(
+                    TeleopState.TIP_LOCK_CAPTURE,
+                    "v7_btn_cross_fixed_tip",
+                )
+
+            # Triangle starts alignment.
             elif inp.y_edge:
                 self._start_alignment()
+
         elif st == TeleopState.TIP_LOCK_ACTIVE:
             if inp.a_edge:
                 self._v7_tip_lock_started_by_r3 = False
-                self.sm.transition_to(TeleopState.FREE_TELEOP, "v7_fixed_tip_unlock")
+
+                self.sm.transition_to(
+                    TeleopState.FREE_TELEOP,
+                    "v7_fixed_tip_unlock",
+                )
+
+        elif st == TeleopState.RCM_ACTIVE:
+            # Options exits RCM mode.
+            if getattr(inp, "options_edge", False):
+                self.sm.transition_to(
+                    TeleopState.FREE_TELEOP,
+                    "v7_options_rcm_exit",
+                )

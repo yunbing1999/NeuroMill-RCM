@@ -67,16 +67,24 @@ class InputSnapshot:
     btn_b: bool = False
     btn_x: bool = False
     btn_y: bool = False
+    #btn_lb: bool = False
+    #btn_back: bool = False
+    #btn_r3: bool = False
     btn_lb: bool = False
     btn_back: bool = False
+    btn_options: bool = False
     btn_r3: bool = False
 
     a_edge: bool = False
     b_edge: bool = False
     x_edge: bool = False
     y_edge: bool = False
+    #lb_edge: bool = False
+    #back_edge: bool = False
+    #r3_edge: bool = False
     lb_edge: bool = False
     back_edge: bool = False
+    options_edge: bool = False
     r3_edge: bool = False
 
     dpad: Tuple[int, int] = (0, 0)
@@ -105,6 +113,15 @@ class DualSenseInput:
         self._last_snapshot = InputSnapshot()
         self._rumble_timer: Optional[threading.Timer] = None
         self._filtered = {"lx": 0.0, "ly": 0.0, "rx": 0.0, "ry": 0.0, "lt": 0.0, "rt": 0.0}
+        #self._prev_btn = {
+        #    "a": False,
+        #    "b": False,
+        #    "x": False,
+        #    "y": False,
+        #    "lb": False,
+        #    "back": False,
+        #    "r3": False,
+        #}
         self._prev_btn = {
             "a": False,
             "b": False,
@@ -112,8 +129,18 @@ class DualSenseInput:
             "y": False,
             "lb": False,
             "back": False,
+            "options": False,
             "r3": False,
         }
+        #self._edge_time = {
+        #    "a": 0.0,
+        #    "b": 0.0,
+        #    "x": 0.0,
+        #    "y": 0.0,
+        #    "lb": 0.0,
+        #    "back": 0.0,
+        #    "r3": 0.0,
+        #}
         self._edge_time = {
             "a": 0.0,
             "b": 0.0,
@@ -121,6 +148,7 @@ class DualSenseInput:
             "y": 0.0,
             "lb": 0.0,
             "back": 0.0,
+            "options": 0.0,
             "r3": 0.0,
         }
         self._connect()
@@ -373,10 +401,17 @@ class DualSenseInput:
                     raw_rx=self._last_snapshot.raw_rx, raw_ry=self._last_snapshot.raw_ry,
                     btn_rb=self._last_snapshot.btn_rb, btn_a=self._last_snapshot.btn_a,
                     btn_b=self._last_snapshot.btn_b, btn_x=self._last_snapshot.btn_x, btn_y=self._last_snapshot.btn_y,
-                    btn_lb=self._last_snapshot.btn_lb, btn_back=self._last_snapshot.btn_back,
+                    #btn_lb=self._last_snapshot.btn_lb, btn_back=self._last_snapshot.btn_back,
+                    #btn_r3=self._last_snapshot.btn_r3,
+                    btn_lb=self._last_snapshot.btn_lb,
+                    btn_back=self._last_snapshot.btn_back,
+                    btn_options=self._last_snapshot.btn_options,
                     btn_r3=self._last_snapshot.btn_r3,
-                    a_edge=False, b_edge=False, x_edge=False, y_edge=False, lb_edge=False, back_edge=False,
-                    r3_edge=False,
+                    #a_edge=False, b_edge=False, x_edge=False, y_edge=False, lb_edge=False, back_edge=False,
+                    #r3_edge=False,
+                    a_edge=False, b_edge=False, x_edge=False, y_edge=False,
+                    lb_edge=False, back_edge=False,
+                    options_edge=False, r3_edge=False,
                     dpad=self._last_snapshot.dpad, connected=True,
                     _trigger_feedback_cb=self.set_drilling_feedback,
                 )
@@ -417,16 +452,34 @@ class DualSenseInput:
         btn_b = self._read_button("btn_circle")
         btn_x = self._read_button("btn_square")
         btn_y = self._read_button("btn_triangle")
+        #btn_lb = self._read_button("btn_l1")
+        #btn_back = self._read_button("btn_create")
+        #btn_r3 = self._read_button("btn_r3")
         btn_lb = self._read_button("btn_l1")
         btn_back = self._read_button("btn_create")
+
+        # Small button on the right side of the DualSense touchpad.
+        # Support common property names used by library versions.
+        btn_options = (
+            self._read_button("btn_options")
+            or self._read_button("btn_option")
+        )
+
         btn_r3 = self._read_button("btn_r3")
 
         a_edge = self._check_edge("a", btn_a)
         b_edge = self._check_edge("b", btn_b)
         x_edge = self._check_edge("x", btn_x)
         y_edge = self._check_edge("y", btn_y)
+        #lb_edge = self._check_edge("lb", btn_lb)
+        #back_edge = self._check_edge("back", btn_back)
+        #r3_edge = self._check_edge("r3", btn_r3)
         lb_edge = self._check_edge("lb", btn_lb)
         back_edge = self._check_edge("back", btn_back)
+        options_edge = self._check_edge(
+            "options",
+            btn_options,
+        )
         r3_edge = self._check_edge("r3", btn_r3)
 
         snapshot = InputSnapshot(
@@ -445,15 +498,23 @@ class DualSenseInput:
             btn_b=btn_b,
             btn_x=btn_x,
             btn_y=btn_y,
+            #btn_lb=btn_lb,
+            #btn_back=btn_back,
+            #btn_r3=btn_r3,
             btn_lb=btn_lb,
             btn_back=btn_back,
+            btn_options=btn_options,
             btn_r3=btn_r3,
             a_edge=a_edge,
             b_edge=b_edge,
             x_edge=x_edge,
             y_edge=y_edge,
+            #lb_edge=lb_edge,
+            #back_edge=back_edge,
+            #r3_edge=r3_edge,
             lb_edge=lb_edge,
             back_edge=back_edge,
+            options_edge=options_edge,
             r3_edge=r3_edge,
             dpad=dpad,
             connected=True,
