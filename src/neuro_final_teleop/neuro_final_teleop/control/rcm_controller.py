@@ -19,6 +19,9 @@ class RCMConfig:
     max_correction_mm_s: float = 10.0
     damping: float = 0.025
 
+    # Converts angular velocity into an equivalent linear task scale.
+    characteristic_length_m: float = 0.0572957795
+
     qdot_limit_rad_s: float = 0.40
     qddot_limit_rad_s2: float = 1.50
 
@@ -210,8 +213,7 @@ class RCMController:
         Task priority:
 
         1. Correct lateral RCM error.
-        2. Command insertion along the current shaft.
-        3. Follow operator-requested angular velocity.
+        2. Follow the operator's insertion and angular commands.
         """
 
         if not self.active or self._entry_point_m is None:
@@ -333,6 +335,11 @@ class RCMController:
             correction_limit_m_s,
         )
 
+        characteristic_length_m = max(
+            float(self.cfg.characteristic_length_m),
+            1e-6,
+        )
+
         damping = max(
             float(self.cfg.damping),
             1e-6,
@@ -357,7 +364,7 @@ class RCMController:
         )
 
         # -------------------------------------------------------------
-        # Priority 2: insertion along the current shaft
+        # Priority 2: operator insertion and angular velocity
         # -------------------------------------------------------------
 
         insertion_jacobian = (
@@ -365,66 +372,43 @@ class RCMController:
             @ linear_jacobian
         )
 
-        insertion_in_rcm_null = (
-            insertion_jacobian
+        operator_jacobian = np.vstack(
+            (
+                insertion_jacobian,
+                characteristic_length_m * angular_jacobian,
+            )
+        )
+
+        operator_in_rcm_null = (
+            operator_jacobian
             @ null_rcm
         )
 
-        insertion_pinv = self._damped_pinv(
-            insertion_in_rcm_null,
+        operator_pinv = self._damped_pinv(
+            operator_in_rcm_null,
             damping,
         )
 
-        insertion_target = np.array(
-            [float(desired_insertion_m_s)],
-            dtype=float,
+        operator_target = np.concatenate(
+            (
+                np.array(
+                    [float(desired_insertion_m_s)],
+                    dtype=float,
+                ),
+                characteristic_length_m * desired_w,
+            )
         )
 
-        insertion_residual = (
-            insertion_target
-            - insertion_jacobian @ qdot
+        operator_residual = (
+            operator_target
+            - operator_jacobian @ qdot
         )
 
         qdot = (
             qdot
             + null_rcm
-            @ insertion_pinv
-            @ insertion_residual
-        )
-
-        null_insertion = (
-            null_rcm
-            @ (
-                identity_7
-                - insertion_pinv
-                @ insertion_in_rcm_null
-            )
-        )
-
-        # -------------------------------------------------------------
-        # Priority 3: operator angular velocity
-        # -------------------------------------------------------------
-
-        angular_in_null = (
-            angular_jacobian
-            @ null_insertion
-        )
-
-        angular_pinv = self._damped_pinv(
-            angular_in_null,
-            damping,
-        )
-
-        angular_residual = (
-            desired_w
-            - angular_jacobian @ qdot
-        )
-
-        qdot = (
-            qdot
-            + null_insertion
-            @ angular_pinv
-            @ angular_residual
+            @ operator_pinv
+            @ operator_residual
         )
 
         # -------------------------------------------------------------

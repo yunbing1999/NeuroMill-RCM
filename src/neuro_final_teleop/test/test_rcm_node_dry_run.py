@@ -1,4 +1,5 @@
 import rclpy
+import math
 
 from neuro_final_teleop.control.state_machine import TeleopState
 from neuro_final_teleop.neuro_final_teleop import NeuroFinalTeleopNode
@@ -12,6 +13,8 @@ def test_rcm_full_node_dry_run(monkeypatch):
     rclpy.init(args=[
         "--ros-args",
         "-p", "enable_control_timer:=false",
+        "-p", "v7_rcm_max_insertion_mm_s:=2.0",
+        "-p", "v7_rcm_max_angular_deg_s:=4.0",
     ])
 
     node = None
@@ -19,6 +22,16 @@ def test_rcm_full_node_dry_run(monkeypatch):
     try:
         node = NeuroFinalTeleopNode()
         node._constrained_modes_enabled = True
+        expected_characteristic_length_m = (
+            2.0 * 0.001 / math.radians(4.0)
+        )
+
+        assert math.isclose(
+            node._v7_rcm_controller.cfg.characteristic_length_m,
+            expected_characteristic_length_m,
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        )
 
         joint_commands = []
 

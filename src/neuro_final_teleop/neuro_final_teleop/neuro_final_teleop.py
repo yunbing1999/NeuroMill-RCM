@@ -8,6 +8,7 @@ PS5-focused telemanipulation node for experiment:
 
 from typing import Optional, Tuple
 
+import math
 import json
 import rclpy
 from rclpy.executors import ExternalShutdownException
@@ -776,6 +777,13 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
                     self.v7_rcm_max_correction_mm_s
                 ),
                 damping=self.v7_rcm_damping,
+                characteristic_length_m=(
+                    self.v7_rcm_max_insertion_mm_s
+                    * 0.001
+                    / math.radians(
+                        self.v7_rcm_max_angular_deg_s
+                    )
+                ),
                 qdot_limit_rad_s=(
                     self.v7_rcm_qdot_limit_rad_s
                 ),

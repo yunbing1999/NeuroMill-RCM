@@ -233,6 +233,12 @@ class MotionModesMixin:
         rx = 0.0 if abs(inp.rx) < 0.10 else sigmoid_shape(inp.rx, self.sigmoid_gain)
         ry = 0.0 if abs(inp.ry) < 0.10 else sigmoid_shape(inp.ry, self.sigmoid_gain)
 
+        stick_norm = math.hypot(rx, ry)
+
+        if stick_norm > 1.0:
+            rx /= stick_norm
+            ry /= stick_norm
+
         max_w = math.radians(self.v7_rcm_max_angular_deg_s)
         speed = max_w * self._v7_speed_scale * scale
 

@@ -310,6 +310,107 @@ def test_angular_command_produces_rotation():
     )
 
 
+def test_combined_operator_task_tracks_insertion_and_rotation():
+    controller = make_controller()
+    q = [0.0] * 7
+
+    assert controller.capture(
+        q,
+        [0.0, 0.0, 0.0],
+    )
+
+    desired_speed = math.radians(5.0)
+    result = controller.solve(
+        q_rad=q,
+        desired_angular_rad_s=[desired_speed, 0.0, 0.0],
+        desired_insertion_m_s=0.005,
+        tcp_offset_m=[0.0, 0.0, 0.0],
+        dt_s=0.01,
+    )
+
+    assert result.insertion_mm_s == pytest.approx(
+        5.0,
+        abs=0.1,
+    )
+    assert result.angular_rad_s[0] == pytest.approx(
+        desired_speed,
+        abs=1e-3,
+    )
+    assert result.lateral_error_mm == pytest.approx(
+        0.0,
+        abs=1e-9,
+    )
+
+
+def test_combined_operator_task_preserves_rcm_correction():
+    correction_only_controller = make_controller()
+    combined_controller = make_controller()
+
+    capture_q = [0.0] * 7
+
+    assert correction_only_controller.capture(
+        capture_q,
+        [0.0, 0.0, 0.0],
+    )
+    assert combined_controller.capture(
+        capture_q,
+        [0.0, 0.0, 0.0],
+    )
+
+    # Create a 1 mm lateral RCM error in base X.
+    displaced_q = [
+        0.001,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    ]
+
+    correction_only = correction_only_controller.solve(
+        q_rad=displaced_q,
+        desired_angular_rad_s=[0.0, 0.0, 0.0],
+        desired_insertion_m_s=0.0,
+        tcp_offset_m=[0.0, 0.0, 0.0],
+        dt_s=0.01,
+    )
+
+    desired_speed = math.radians(5.0)
+
+    combined = combined_controller.solve(
+        q_rad=displaced_q,
+        desired_angular_rad_s=[
+            desired_speed,
+            0.0,
+            0.0,
+        ],
+        desired_insertion_m_s=0.005,
+        tcp_offset_m=[0.0, 0.0, 0.0],
+        dt_s=0.01,
+    )
+
+    assert combined.lateral_error_mm == pytest.approx(
+        1.0,
+        abs=1e-6,
+    )
+
+    # Adding P2 must not change the P1 lateral correction command.
+    assert combined.qdot_rad_s[:2] == pytest.approx(
+        correction_only.qdot_rad_s[:2],
+        abs=1e-9,
+    )
+
+    assert combined.insertion_mm_s == pytest.approx(
+        5.0,
+        abs=0.1,
+    )
+    assert combined.angular_rad_s[0] == pytest.approx(
+        desired_speed,
+        abs=1e-3,
+    )
+
+
 def test_joint_velocity_limit():
     controller = make_controller()
     controller.cfg.qdot_limit_rad_s = 0.10

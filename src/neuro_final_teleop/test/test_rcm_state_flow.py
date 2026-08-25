@@ -1,3 +1,4 @@
+import math
 from neuro_final_teleop.control.state_machine import (
     StateMachine,
     TeleopState,
@@ -222,6 +223,35 @@ def test_right_stick_generates_rcm_joint_command():
 
     # Right-stick X should request angular motion.
     assert abs(arguments["desired_angular_rad_s"][0]) > 0.0
+
+def test_diagonal_right_stick_respects_max_angular_speed():
+    host = RCMRotationHost()
+
+    host._vel_rcm_joint_ik(
+        InputSnapshot(rx=1.0, ry=1.0),
+        scale=1.0,
+        joints_rad=[0.0] * 7,
+    )
+
+    desired_w = (
+        host._v7_rcm_controller.arguments[
+            "desired_angular_rad_s"
+        ]
+    )
+
+    angular_norm = math.sqrt(
+        sum(component * component for component in desired_w)
+    )
+    max_angular = math.radians(
+        host.v7_rcm_max_angular_deg_s
+    )
+
+    assert math.isclose(
+        angular_norm,
+        max_angular,
+        rel_tol=1e-9,
+        abs_tol=1e-12,
+    )
 
 def test_rcm_joint_command_uses_mode4_and_ft_scale():
     host = RCMStateFlowHost()
