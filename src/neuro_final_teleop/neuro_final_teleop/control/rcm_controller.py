@@ -21,6 +21,9 @@ class RCMConfig:
 
     # Converts angular velocity into an equivalent linear task scale.
     characteristic_length_m: float = 0.0572957795
+    max_insertion_depth_mm: float = 20.0
+    max_withdrawal_depth_mm: float = 10.0
+    travel_slowdown_mm: float = 5.0
 
     qdot_limit_rad_s: float = 0.40
     qddot_limit_rad_s2: float = 1.50
@@ -44,6 +47,7 @@ class RCMResult:
     correction_mm_s: List[float]
     angular_rad_s: List[float]
     insertion_mm_s: float
+    insertion_depth_mm: float
     limited: bool
 
 
@@ -272,6 +276,7 @@ class RCMController:
         shaft_distance_m = float(
             shaft_axis @ tip_to_entry
         )
+        insertion_depth_mm = -shaft_distance_m * 1000.0
 
         # Closest point on the current shaft line to the captured entry.
         shaft_point = tip + shaft_distance_m * shaft_axis
@@ -389,10 +394,51 @@ class RCMController:
             damping,
         )
 
+        insertion_target_m_s = float(
+            desired_insertion_m_s
+        )
+        travel_limited = False
+
+        max_insertion_mm = max(
+            float(self.cfg.max_insertion_depth_mm),
+            0.0,
+        )
+        max_withdrawal_mm = max(
+            float(self.cfg.max_withdrawal_depth_mm),
+            0.0,
+        )
+
+        slowdown_mm = max(
+            float(self.cfg.travel_slowdown_mm),
+            1e-6,
+        )
+
+        if insertion_target_m_s > 0.0:
+            remaining_mm = max_insertion_mm - insertion_depth_mm
+
+            if remaining_mm <= 0.0:
+                insertion_target_m_s = 0.0
+                travel_limited = True
+            elif remaining_mm < slowdown_mm:
+                insertion_target_m_s *= remaining_mm / slowdown_mm
+                travel_limited = True
+
+        elif insertion_target_m_s < 0.0:
+            remaining_mm = (
+                insertion_depth_mm + max_withdrawal_mm
+            )
+
+            if remaining_mm <= 0.0:
+                insertion_target_m_s = 0.0
+                travel_limited = True
+            elif remaining_mm < slowdown_mm:
+                insertion_target_m_s *= remaining_mm / slowdown_mm
+                travel_limited = True
+
         operator_target = np.concatenate(
             (
                 np.array(
-                    [float(desired_insertion_m_s)],
+                    [insertion_target_m_s],
                     dtype=float,
                 ),
                 characteristic_length_m * desired_w,
@@ -415,7 +461,7 @@ class RCMController:
         # Joint velocity and acceleration limits
         # -------------------------------------------------------------
 
-        limited = False
+        limited = travel_limited
 
         qdot_limit = max(
             float(self.cfg.qdot_limit_rad_s),
@@ -499,5 +545,6 @@ class RCMController:
                 for v in achieved_angular
             ],
             insertion_mm_s=achieved_insertion_mm_s,
+            insertion_depth_mm=insertion_depth_mm,
             limited=limited,
         )

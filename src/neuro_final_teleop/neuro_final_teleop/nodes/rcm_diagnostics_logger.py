@@ -40,7 +40,7 @@ class RCMDiagnosticsLogger(Node):
             + ["lateral_error_mm"]
             + ["desired_wx_rad_s", "desired_wy_rad_s", "desired_wz_rad_s"]
             + ["achieved_wx_rad_s", "achieved_wy_rad_s", "achieved_wz_rad_s"]
-            + ["insertion_mm_s", "limited", "mode", "state"]
+            + ["insertion_depth_mm", "insertion_mm_s", "limited", "mode", "state"]
         )
         self._writer.writerow(header)
         self._file.flush()
@@ -105,6 +105,7 @@ class RCMDiagnosticsLogger(Node):
                 + desired_w
                 + achieved_w
                 + [
+                    data["insertion_depth_mm"],
                     data["insertion_mm_s"],
                     int(data["limited"]),
                     data["mode"],

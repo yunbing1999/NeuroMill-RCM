@@ -61,7 +61,7 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
         self.declare_parameter("v7_tip_lock_joint_ik_qddot_limit_rad_s2", 2.0)
         self.declare_parameter("v7_tip_lock_joint_ik_nullspace_gain", 0.06)
         self.declare_parameter("v7_tip_lock_joint_ik_hold_wz", False)
-        
+
         # Remote-center-of-motion controller.
         self.declare_parameter("v7_rcm_enable", True)
         self.declare_parameter("v7_rcm_correction_gain_s", 12.0)
@@ -76,7 +76,9 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
         # on the physical robot.
         self.declare_parameter("v7_rcm_insertion_enable", False)
         self.declare_parameter("v7_rcm_max_insertion_mm_s", 5.0)
-
+        self.declare_parameter("v7_rcm_max_insertion_depth_mm",20.0,)
+        self.declare_parameter("v7_rcm_max_withdrawal_depth_mm",10.0,)
+        self.declare_parameter("v7_rcm_travel_slowdown_mm", 5.0)
 
         self.declare_parameter("v7_haptic_feedback_gain", 1.0)
         self.declare_parameter("v7_haptics_boot_test", False)
@@ -374,6 +376,9 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
             ),
         )
 
+        self.v7_rcm_max_insertion_depth_mm = max(0.0, float(self.get_parameter("v7_rcm_max_insertion_depth_mm").value))
+        self.v7_rcm_max_withdrawal_depth_mm = max(0.0, float(self.get_parameter("v7_rcm_max_withdrawal_depth_mm").value))
+        self.v7_rcm_travel_slowdown_mm = max(0.0, float(self.get_parameter("v7_rcm_travel_slowdown_mm").value))
 
 
 
@@ -784,6 +789,9 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
                         self.v7_rcm_max_angular_deg_s
                     )
                 ),
+                max_insertion_depth_mm=self.v7_rcm_max_insertion_depth_mm,
+                travel_slowdown_mm=self.v7_rcm_travel_slowdown_mm,
+                max_withdrawal_depth_mm=self.v7_rcm_max_withdrawal_depth_mm,
                 qdot_limit_rad_s=(
                     self.v7_rcm_qdot_limit_rad_s
                 ),
@@ -881,6 +889,7 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
             "achieved_w_rad_s": result.angular_rad_s,
             "joints_rad": list(joints),
             "qdot_rad_s": result.qdot_rad_s,
+            "insertion_depth_mm": result.insertion_depth_mm,
             "insertion_mm_s": result.insertion_mm_s,
             "limited": result.limited,
             "mode": int(getattr(self.arm, "mode", -1)),

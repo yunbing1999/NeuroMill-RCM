@@ -245,6 +245,212 @@ def test_axial_displacement_is_not_lateral_error():
         abs=1e-9,
     )
 
+    assert result.insertion_depth_mm == pytest.approx(
+        20.0,
+        abs=1e-9,
+    )
+
+
+def test_insertion_stops_at_positive_depth_limit():
+    controller = make_controller()
+    controller.cfg.max_insertion_depth_mm = 20.0
+
+    assert controller.capture(
+        [0.0] * 7,
+        [0.0] * 3,
+    )
+
+    q = [0.0] * 7
+    q[2] = 0.020
+
+    result = controller.solve(
+        q_rad=q,
+        desired_angular_rad_s=[0.0] * 3,
+        desired_insertion_m_s=0.005,
+        tcp_offset_m=[0.0] * 3,
+        dt_s=0.01,
+    )
+
+    assert result.insertion_depth_mm == pytest.approx(20.0)
+    assert result.insertion_mm_s == pytest.approx(0.0)
+
+
+def test_insertion_slows_near_positive_limit():
+    controller = make_controller()
+
+    assert controller.capture([0.0] * 7, [0.0] * 3)
+
+    q = [0.0] * 7
+    q[2] = 0.018
+
+    result = controller.solve(
+        q_rad=q,
+        desired_angular_rad_s=[0.0] * 3,
+        desired_insertion_m_s=0.005,
+        tcp_offset_m=[0.0] * 3,
+        dt_s=0.01,
+    )
+
+    assert result.insertion_mm_s == pytest.approx(
+        2.0,
+        abs=0.1,
+    )
+    assert result.limited is True
+
+
+def test_repeated_insertion_stays_inside_positive_limit():
+    controller = make_controller()
+    controller.cfg.qddot_limit_rad_s2 = 0.05
+
+    q = np.zeros(7)
+    dt = 0.01
+
+    assert controller.capture(q.tolist(), [0.0] * 3)
+
+    max_depth_mm = 0.0
+
+    for _ in range(1000):
+        result = controller.solve(
+            q_rad=q.tolist(),
+            desired_angular_rad_s=[0.0] * 3,
+            desired_insertion_m_s=0.005,
+            tcp_offset_m=[0.0] * 3,
+            dt_s=dt,
+        )
+
+        q += np.asarray(result.qdot_rad_s) * dt
+        max_depth_mm = max(max_depth_mm, q[2] * 1000.0)
+
+    assert max_depth_mm <= 20.001
+    assert q[2] * 1000.0 > 19.9
+
+
+def test_repeated_withdrawal_stays_inside_negative_limit():
+    controller = make_controller()
+    controller.cfg.qddot_limit_rad_s2 = 0.05
+
+    q = np.zeros(7)
+    dt = 0.01
+
+    assert controller.capture(q.tolist(), [0.0] * 3)
+
+    min_depth_mm = 0.0
+
+    for _ in range(1000):
+        result = controller.solve(
+            q_rad=q.tolist(),
+            desired_angular_rad_s=[0.0] * 3,
+            desired_insertion_m_s=-0.005,
+            tcp_offset_m=[0.0] * 3,
+            dt_s=dt,
+        )
+
+        q += np.asarray(result.qdot_rad_s) * dt
+        min_depth_mm = min(min_depth_mm, q[2] * 1000.0)
+
+    assert min_depth_mm >= -10.001
+    assert q[2] * 1000.0 < -9.9
+
+
+def test_withdrawal_is_allowed_at_positive_limit():
+    controller = make_controller()
+
+    assert controller.capture(
+        [0.0] * 7,
+        [0.0] * 3,
+    )
+
+    q = [0.0] * 7
+    q[2] = 0.020
+
+    result = controller.solve(
+        q_rad=q,
+        desired_angular_rad_s=[0.0] * 3,
+        desired_insertion_m_s=-0.005,
+        tcp_offset_m=[0.0] * 3,
+        dt_s=0.01,
+    )
+
+    assert result.insertion_mm_s == pytest.approx(
+        -5.0,
+        abs=0.1,
+    )
+    assert result.limited is False
+
+
+def test_withdrawal_slows_near_negative_limit():
+    controller = make_controller()
+
+    assert controller.capture([0.0] * 7, [0.0] * 3)
+
+    q = [0.0] * 7
+    q[2] = -0.008
+
+    result = controller.solve(
+        q_rad=q,
+        desired_angular_rad_s=[0.0] * 3,
+        desired_insertion_m_s=-0.005,
+        tcp_offset_m=[0.0] * 3,
+        dt_s=0.01,
+    )
+
+    assert result.insertion_mm_s == pytest.approx(
+        -2.0,
+        abs=0.1,
+    )
+    assert result.limited is True
+
+
+def test_withdrawal_stops_at_negative_depth_limit():
+    controller = make_controller()
+    controller.cfg.max_withdrawal_depth_mm = 10.0
+
+    assert controller.capture(
+        [0.0] * 7,
+        [0.0] * 3,
+    )
+
+    q = [0.0] * 7
+    q[2] = -0.010
+
+    result = controller.solve(
+        q_rad=q,
+        desired_angular_rad_s=[0.0] * 3,
+        desired_insertion_m_s=-0.005,
+        tcp_offset_m=[0.0] * 3,
+        dt_s=0.01,
+    )
+
+    assert result.insertion_depth_mm == pytest.approx(-10.0)
+    assert result.insertion_mm_s == pytest.approx(0.0)
+    assert result.limited is True
+
+
+def test_insertion_is_allowed_at_negative_limit():
+    controller = make_controller()
+
+    assert controller.capture(
+        [0.0] * 7,
+        [0.0] * 3,
+    )
+
+    q = [0.0] * 7
+    q[2] = -0.010
+
+    result = controller.solve(
+        q_rad=q,
+        desired_angular_rad_s=[0.0] * 3,
+        desired_insertion_m_s=0.005,
+        tcp_offset_m=[0.0] * 3,
+        dt_s=0.01,
+    )
+
+    assert result.insertion_mm_s == pytest.approx(
+        5.0,
+        abs=0.1,
+    )
+    assert result.limited is False
+
 
 def test_insertion_command_produces_axial_velocity():
     controller = make_controller()

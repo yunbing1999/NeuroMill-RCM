@@ -187,6 +187,8 @@ class RCMRotationHost(MotionModesMixin):
         self._v7_rcm_controller = FakeMotionRCM()
 
         self.v7_rcm_max_angular_deg_s = 5.0
+        self.v7_rcm_insertion_enable = False
+        self.v7_rcm_max_insertion_mm_s = 5.0
         self._v7_speed_scale = 1.0
         self.sigmoid_gain = 0.5
         self.dt = 0.01
@@ -224,6 +226,7 @@ def test_right_stick_generates_rcm_joint_command():
     # Right-stick X should request angular motion.
     assert abs(arguments["desired_angular_rad_s"][0]) > 0.0
 
+
 def test_diagonal_right_stick_respects_max_angular_speed():
     host = RCMRotationHost()
 
@@ -252,6 +255,78 @@ def test_diagonal_right_stick_respects_max_angular_speed():
         rel_tol=1e-9,
         abs_tol=1e-12,
     )
+
+
+def test_rcm_insertion_stays_zero_when_disabled():
+    host = RCMRotationHost()
+
+    host._vel_rcm_joint_ik(
+        InputSnapshot(rt=1.0, lt=0.0),
+        scale=1.0,
+        joints_rad=[0.0] * 7,
+    )
+
+    arguments = host._v7_rcm_controller.arguments
+
+    assert arguments["desired_insertion_m_s"] == 0.0
+
+
+def test_rcm_r2_requests_positive_insertion_when_enabled():
+    host = RCMRotationHost()
+    host.v7_rcm_insertion_enable = True
+
+    host._vel_rcm_joint_ik(
+        InputSnapshot(rt=1.0, lt=0.0),
+        scale=1.0,
+        joints_rad=[0.0] * 7,
+    )
+
+    desired_insertion_m_s = (
+        host._v7_rcm_controller.arguments[
+            "desired_insertion_m_s"
+        ]
+    )
+
+    assert math.isclose(
+        desired_insertion_m_s,
+        0.005,
+        rel_tol=1e-9,
+        abs_tol=1e-12,
+    )
+
+
+def test_rcm_l2_requests_withdrawal():
+    host = RCMRotationHost()
+    host.v7_rcm_insertion_enable = True
+
+    host._vel_rcm_joint_ik(
+        InputSnapshot(lt=1.0),
+        scale=1.0,
+        joints_rad=[0.0] * 7,
+    )
+
+    speed = host._v7_rcm_controller.arguments[
+        "desired_insertion_m_s"
+    ]
+    assert math.isclose(speed, -0.005)
+
+
+def test_rcm_insertion_uses_speed_scales():
+    host = RCMRotationHost()
+    host.v7_rcm_insertion_enable = True
+    host._v7_speed_scale = 0.5
+
+    host._vel_rcm_joint_ik(
+        InputSnapshot(rt=1.0),
+        scale=0.4,
+        joints_rad=[0.0] * 7,
+    )
+
+    speed = host._v7_rcm_controller.arguments[
+        "desired_insertion_m_s"
+    ]
+    assert math.isclose(speed, 0.001)
+
 
 def test_rcm_joint_command_uses_mode4_and_ft_scale():
     host = RCMStateFlowHost()

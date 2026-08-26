@@ -15,13 +15,20 @@ def test_rcm_full_node_dry_run(monkeypatch):
         "-p", "enable_control_timer:=false",
         "-p", "v7_rcm_max_insertion_mm_s:=2.0",
         "-p", "v7_rcm_max_angular_deg_s:=4.0",
+        "-p", "v7_rcm_max_insertion_depth_mm:=12.0",
+        "-p", "v7_rcm_max_withdrawal_depth_mm:=7.0",
+        "-p", "v7_rcm_travel_slowdown_mm:=3.0",
     ])
-
     node = None
 
     try:
         node = NeuroFinalTeleopNode()
         node._constrained_modes_enabled = True
+
+        cfg = node._v7_rcm_controller.cfg
+        assert cfg.max_insertion_depth_mm == 12.0
+        assert cfg.max_withdrawal_depth_mm == 7.0
+        assert cfg.travel_slowdown_mm == 3.0
         expected_characteristic_length_m = (
             2.0 * 0.001 / math.radians(4.0)
         )
