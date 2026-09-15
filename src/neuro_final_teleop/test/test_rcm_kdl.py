@@ -20,7 +20,6 @@ def test_rcm_with_real_kdl_model():
             damping=0.01,
             qdot_limit_rad_s=0.30,
             qddot_limit_rad_s2=10.0,
-            nullspace_gain=0.0,
             shaft_axis_sign=1.0,
         ),
     )

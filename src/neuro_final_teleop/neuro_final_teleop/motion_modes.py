@@ -233,8 +233,35 @@ class MotionModesMixin:
         rx = 0.0 if abs(inp.rx) < 0.10 else sigmoid_shape(inp.rx, self.sigmoid_gain)
         ry = 0.0 if abs(inp.ry) < 0.10 else sigmoid_shape(inp.ry, self.sigmoid_gain)
 
+        stick_norm = math.hypot(rx, ry)
+
+        if stick_norm > 1.0:
+            rx /= stick_norm
+            ry /= stick_norm
+
         max_w = math.radians(self.v7_rcm_max_angular_deg_s)
         speed = max_w * self._v7_speed_scale * scale
+        desired_insertion_m_s = 0.0
+
+        if self.v7_rcm_insertion_enable:
+            depth_axis = self._depth_axis_inward(inp)
+
+            depth_cmd = (
+                0.0
+                if abs(depth_axis) < 0.10
+                else sigmoid_shape(
+                    depth_axis,
+                    self.sigmoid_gain,
+                )
+            )
+
+            desired_insertion_m_s = (
+                depth_cmd
+                * self.v7_rcm_max_insertion_mm_s
+                * 0.001
+                * self._v7_speed_scale
+                * scale
+            )
 
         # Right stick commands tool-frame X/Y rotation.
         local_w = [-rx * speed, ry * speed, 0.0]
@@ -256,7 +283,7 @@ class MotionModesMixin:
             result = self._v7_rcm_controller.solve(
                 q_rad=joints_rad[:7],
                 desired_angular_rad_s=base_w.tolist(),
-                desired_insertion_m_s=0.0,  # Insertion remains disabled.
+                desired_insertion_m_s=desired_insertion_m_s,
                 tcp_offset_m=tcp_m,
                 dt_s=self.dt,
             )

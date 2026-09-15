@@ -73,16 +73,64 @@ rcm_logs/
 
 `run_summary.csv` contains one summary row for each retained run.
 
-## Reproducing the analysis
+## Compact RCM logging
 
-From the workspace root:
+New experiments use one compact logger. Start the teleoperation node first and
+confirm that `/neuro_final/rcm_diagnostics` is being published. Then open a
+second terminal and run:
 
 ```bash
+cd /home/yunbing/NeuroMill_Final
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
-python3 src/neuro_final_teleop/experiments/analyze_studio_rcm_repeats.py
+
+ros2 run neuro_final_teleop rcm_diagnostics_logger --ros-args \
+  -p output_dir:=/home/yunbing/NeuroMill_Final/rcm_logs/compact_runs/run_01
 ```
 
-The analysis script regenerates `run_summary.csv` and also creates derived
-steady-sample and plot files. Those generated files are not required to retain
-the five original runs and may be removed after inspection.
+Press `Ctrl+C` in the logger terminal after the experiment. The logger prints a
+summary and saves one timestamped CSV file in the selected output directory.
+
+Each new compact CSV contains only these 13 fields:
+
+```text
+time_s
+lateral_error_mm
+desired_angular_speed_rad_s
+achieved_angular_speed_rad_s
+angular_error_rad_s
+requested_insertion_mm_s
+target_insertion_mm_s
+achieved_insertion_mm_s
+insertion_depth_mm
+max_joint_speed_rad_s
+travel_limited
+joint_velocity_limited
+joint_acceleration_limited
+```
+
+The three insertion values have different meanings:
+
+- `requested`: operator command before travel limiting.
+- `target`: command after slowdown and travel limiting.
+- `achieved`: motion produced after the hierarchical solver and joint limits.
+
+## Analyzing one compact CSV
+
+From the workspace root, pass one compact CSV path to the analyzer:
+
+```bash
+cd /home/yunbing/NeuroMill_Final
+
+python3 src/neuro_final_teleop/experiments/analyze_compact_rcm_csv.py \
+  rcm_logs/compact_runs/run_01/rcm_YYYYMMDD_HHMMSS.csv
+```
+
+The analyzer reports sample count and rate, RCM mean/RMS/95th-percentile/maximum
+error, mean angular and insertion tracking errors, insertion depth range,
+maximum joint speed, and the three limiter counts. It reads the CSV without
+modifying it or creating derived files.
+
+The retained `studio_calibrated_standard` files use the previous detailed CSV
+schema. They document the completed rotation-only experiment but are not input
+for `analyze_compact_rcm_csv.py`.

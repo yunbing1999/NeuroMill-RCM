@@ -8,6 +8,7 @@ PS5-focused telemanipulation node for experiment:
 
 from typing import Optional, Tuple
 
+import math
 import json
 import rclpy
 from rclpy.executors import ExternalShutdownException
@@ -60,7 +61,7 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
         self.declare_parameter("v7_tip_lock_joint_ik_qddot_limit_rad_s2", 2.0)
         self.declare_parameter("v7_tip_lock_joint_ik_nullspace_gain", 0.06)
         self.declare_parameter("v7_tip_lock_joint_ik_hold_wz", False)
-        
+
         # Remote-center-of-motion controller.
         self.declare_parameter("v7_rcm_enable", True)
         self.declare_parameter("v7_rcm_correction_gain_s", 12.0)
@@ -68,7 +69,6 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
         self.declare_parameter("v7_rcm_damping", 0.025)
         self.declare_parameter("v7_rcm_qdot_limit_rad_s", 0.40)
         self.declare_parameter("v7_rcm_qddot_limit_rad_s2", 1.50)
-        self.declare_parameter("v7_rcm_nullspace_gain", 0.04)
         self.declare_parameter("v7_rcm_shaft_axis_sign", 1.0)
         self.declare_parameter("v7_rcm_max_angular_deg_s", 5.0)
 
@@ -76,7 +76,9 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
         # on the physical robot.
         self.declare_parameter("v7_rcm_insertion_enable", False)
         self.declare_parameter("v7_rcm_max_insertion_mm_s", 5.0)
-
+        self.declare_parameter("v7_rcm_max_insertion_depth_mm",20.0,)
+        self.declare_parameter("v7_rcm_max_withdrawal_depth_mm",10.0,)
+        self.declare_parameter("v7_rcm_travel_slowdown_mm", 5.0)
 
         self.declare_parameter("v7_haptic_feedback_gain", 1.0)
         self.declare_parameter("v7_haptics_boot_test", False)
@@ -340,15 +342,6 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
             ),
         )
 
-        self.v7_rcm_nullspace_gain = max(
-            0.0,
-            float(
-                self.get_parameter(
-                    "v7_rcm_nullspace_gain"
-                ).value
-            ),
-        )
-
         shaft_axis_sign = float(
             self.get_parameter(
                 "v7_rcm_shaft_axis_sign"
@@ -383,6 +376,9 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
             ),
         )
 
+        self.v7_rcm_max_insertion_depth_mm = max(0.0, float(self.get_parameter("v7_rcm_max_insertion_depth_mm").value))
+        self.v7_rcm_max_withdrawal_depth_mm = max(0.0, float(self.get_parameter("v7_rcm_max_withdrawal_depth_mm").value))
+        self.v7_rcm_travel_slowdown_mm = max(0.0, float(self.get_parameter("v7_rcm_travel_slowdown_mm").value))
 
 
 
@@ -786,14 +782,21 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
                     self.v7_rcm_max_correction_mm_s
                 ),
                 damping=self.v7_rcm_damping,
+                characteristic_length_m=(
+                    self.v7_rcm_max_insertion_mm_s
+                    * 0.001
+                    / math.radians(
+                        self.v7_rcm_max_angular_deg_s
+                    )
+                ),
+                max_insertion_depth_mm=self.v7_rcm_max_insertion_depth_mm,
+                travel_slowdown_mm=self.v7_rcm_travel_slowdown_mm,
+                max_withdrawal_depth_mm=self.v7_rcm_max_withdrawal_depth_mm,
                 qdot_limit_rad_s=(
                     self.v7_rcm_qdot_limit_rad_s
                 ),
                 qddot_limit_rad_s2=(
                     self.v7_rcm_qddot_limit_rad_s2
-                ),
-                nullspace_gain=(
-                    self.v7_rcm_nullspace_gain
                 ),
                 shaft_axis_sign=(
                     self.v7_rcm_shaft_axis_sign
@@ -869,27 +872,32 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
         self.add_on_set_parameters_callback(self._on_haptic_eval_parameter_change)
 
     def _publish_rcm_diagnostics(self, result, desired_w, joints):
-        """Publish RCM measurements at a maximum of 25 Hz."""
+        """Publish compact RCM measurements at a maximum of 25 Hz."""
 
         now = self.get_clock().now().nanoseconds / 1e9
         if now - self._v7_last_rcm_diag_s < 0.04:
             return
         self._v7_last_rcm_diag_s = now
 
+        desired_w = [float(v) for v in desired_w]
+        achieved_w = [float(v) for v in result.angular_rad_s]
+
         data = {
             "time_s": now,
-            "entry_mm": result.entry_point_mm,
-            "shaft_mm": result.shaft_point_mm,
-            "error_vector_mm": result.lateral_error_vector_mm,
-            "error_mm": result.lateral_error_mm,
-            "desired_w_rad_s": desired_w,
-            "achieved_w_rad_s": result.angular_rad_s,
-            "joints_rad": list(joints),
-            "qdot_rad_s": result.qdot_rad_s,
-            "insertion_mm_s": result.insertion_mm_s,
-            "limited": result.limited,
-            "mode": int(getattr(self.arm, "mode", -1)),
-            "state": int(getattr(self.arm, "state", -1)),
+            "lateral_error_mm": result.lateral_error_mm,
+            "desired_angular_speed_rad_s": math.sqrt(sum(v * v for v in desired_w)),
+            "achieved_angular_speed_rad_s": math.sqrt(sum(v * v for v in achieved_w)),
+            "angular_error_rad_s": math.sqrt(
+                sum((d - a) ** 2 for d, a in zip(desired_w, achieved_w))
+            ),
+            "requested_insertion_mm_s": result.requested_insertion_mm_s,
+            "target_insertion_mm_s": result.target_insertion_mm_s,
+            "achieved_insertion_mm_s": result.insertion_mm_s,
+            "insertion_depth_mm": result.insertion_depth_mm,
+            "max_joint_speed_rad_s": max(abs(v) for v in result.qdot_rad_s),
+            "travel_limited": result.travel_limited,
+            "joint_velocity_limited": result.joint_velocity_limited,
+            "joint_acceleration_limited": result.joint_acceleration_limited,
         }
 
         msg = String()
