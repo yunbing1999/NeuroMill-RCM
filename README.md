@@ -1,534 +1,427 @@
 # NeuroMill Final
 
-NeuroMill Final is a standalone ROS 2 Humble workspace for xArm7 teleoperation
-with a PS5 DualSense controller, force/torque haptic feedback, live monitoring,
-RViz robot visualization, ZED camera recording, and rosbag playback.
+NeuroMill Final is a ROS 2 Jazzy workspace for teleoperating a UFACTORY xArm7
+with a PS5 DualSense controller. It includes free Cartesian teleoperation,
+fixed-tip control, two-level remote-center-of-motion (RCM) control, bounded
+insertion and withdrawal, force/torque safety, haptic feedback, diagnostics,
+and experiment logging.
 
 The active ROS package is `neuro_final_teleop`.
 
-After building and sourcing this workspace, this command should return a path:
+> **Safety:** Develop and validate new motion features in UFACTORY Studio Sim
+> first. Use low speed, keep the emergency stop accessible, and do not assume
+> that a model-based RCM error is a physical measurement of the drill shaft.
 
-```bash
-ros2 pkg prefix neuro_final_teleop
+## Current RCM Design
+
+The RCM joint-velocity solver uses two priority levels:
+
+```text
+P1: maintain the captured RCM entry-point constraint
+P2: operator rotation and insertion/withdrawal at equal priority
 ```
 
-If it says `Package not found`, the workspace has not been built and sourced in
-the current terminal.
+P2 is solved inside the null space of P1. Joint velocity and acceleration
+limits are applied afterward. Insertion includes positive and negative travel
+limits plus a soft slowdown zone near each boundary.
+
+The current controller assumes that the drill shaft is parallel to the modeled
+tool `+Z` axis. This assumption has not yet been fully validated against the
+physical drill mounting and remains an important limitation.
 
 ## Repository Layout
 
 ```text
 NeuroMill_Final/
-  README.md
-  requirements.txt
-  docs/
-  recordings/                 Local bag output folder, ignored by git.
-  src/
-    neuro_final_teleop/       Main control package, GUI, launch files, configs.
-    external/                 xArm and ZED ROS packages used by full launch.
+├── README.md
+├── requirements.txt
+├── rcm_logs/                       RCM experiment documentation and local CSVs
+└── src/
+    ├── neuro_final_teleop/         Main ROS 2 package
+    └── external/                   xArm and ZED ROS packages
 ```
 
-The control code is in `src/neuro_final_teleop`. The `src/external` folder
-contains ROS packages needed for robot description, ZED messages, ZED launch
-support, RViz, and playback visualization.
+Important package files:
 
-## Runtime Pieces
+```text
+src/neuro_final_teleop/
+├── config/                         Runtime parameter profiles
+├── experiments/                    Offline analysis scripts
+├── launch/                         ROS 2 launch files
+├── neuro_final_teleop/
+│   ├── neuro_final_teleop.py       Main node and parameters
+│   ├── motion_modes.py             Operator commands and mode transitions
+│   ├── force_haptics.py            FT safety and DualSense feedback
+│   ├── control/
+│   │   ├── kinematics.py           Calibrated PyKDL model
+│   │   └── rcm_controller.py       Two-level RCM solver
+│   └── nodes/
+│       └── rcm_diagnostics_logger.py
+└── test/                            Unit and dry-run tests
+```
 
-| Component | Executable | Purpose |
-|---|---|---|
-| Teleop node | `neuro_final_teleop` | DualSense input, xArm velocity commands, fixed-tip mode, FT safety, haptics |
-| FT bridge | `ft_bridge` | Reads xArm force/torque data and publishes `/xarm/ft_data` |
-| Joint bridge | `joint_state_bridge` | Reads xArm joints and publishes `/joint_states` |
-| Session GUI | `session_gui` | Live FT monitor, haptic mode control, recording button |
-| Full launch | `system.launch.py` | Robot model, ZED, RViz, bridges, teleop, GUI |
+## Requirements
 
-Important topics:
+- Ubuntu 24.04
+- ROS 2 Jazzy
+- Python 3.12
+- UFACTORY xArm Python SDK
+- PyKDL
+- PS5 DualSense controller
+- Access to the xArm controller network
 
-| Topic | Purpose |
-|---|---|
-| `/xarm/ft_data` | Force/torque stream used by GUI, haptics, and bags |
-| `/neuro_final/ft_haptic_debug` | JSON debug state for haptic/contact decisions |
-| `/joint_states` | Robot joint states for RViz and playback |
-| `/tf`, `/tf_static` | Robot/camera transform tree |
-| `/zed/zed_node/rgb/color/rect/image` | ZED RGB image recorded with force data |
-| `/zed/zed_node/rgb/color/rect/camera_info` | ZED camera calibration metadata |
+Optional components include the xArm force/torque sensor, RViz, and a ZED
+camera with its SDK and ROS driver.
 
-## First Time Setup
-
-Use Ubuntu 22.04 with ROS 2 Humble.
+## First-Time Setup
 
 ```bash
 cd ~
-git clone https://github.com/Isaac-Can-Do/NeuroMill_Final.git
+git clone git@github.com:yunbing1999/NeuroMill-RCM.git NeuroMill_Final
 cd ~/NeuroMill_Final
+
+source /opt/ros/jazzy/setup.bash
 
 sudo apt update
 sudo apt install -y \
   python3-colcon-common-extensions \
   python3-pip \
   python3-pykdl \
-  ros-humble-robot-state-publisher \
-  ros-humble-rviz2 \
-  ros-humble-xacro
+  ros-jazzy-robot-state-publisher \
+  ros-jazzy-rviz2 \
+  ros-jazzy-xacro
 
 python3 -m pip install -r requirements.txt
-
-source /opt/ros/humble/setup.bash
 rosdep update
 rosdep install --from-paths src --ignore-src -r -y
+
 colcon build --symlink-install
 source install/setup.bash
 ```
 
-Live ZED camera use also requires the ZED SDK/driver to be installed on the
-computer and the camera to be connected. The ROS wrapper sources are included,
-but the hardware driver still has to work on the machine.
-
-## Hardware Checklist
-
-Before live teleoperation:
-
-- xArm controller is reachable on the network. The normal robot IP is
-  `192.168.1.243`.
-- The PS5 DualSense is connected.
-- The user has read/write permission for the DualSense `hidraw` device.
-- The xArm force/torque sensor is enabled.
-- For camera recording, the ZED camera is connected and visible to the ZED SDK.
-- No other process is commanding the same robot.
-
-DualSense udev rule if input or haptics are blocked:
+Verify the package:
 
 ```bash
-sudo tee /etc/udev/rules.d/70-dualsense.rules >/dev/null <<'EOF'
-KERNEL=="hidraw*", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="0ce6", MODE="0666", TAG+="uaccess"
-EOF
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-```
-
-Unplug and reconnect the controller after applying the rule.
-
-## Normal Drilling Run
-
-This starts the FT bridge, joint bridge, teleop node, and session GUI with the
-Drilling profile:
-
-```bash
-cd ~/NeuroMill_Final
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-ros2 launch neuro_final_teleop teleop.launch.py \
-  robot_ip:=192.168.1.243 \
-  config:=$(ros2 pkg prefix neuro_final_teleop)/share/neuro_final_teleop/config/neuro_final_drilling.yaml \
-  debug_topic_enable:=true \
-  trigger_enable:=true \
-  rumble_enable:=true
-```
-
-Use this when you want robot control, force feedback, haptic debug data, and
-recording from the GUI, but do not need RViz or live ZED launch.
-
-## Full RViz + ZED Run
-
-Use this when you want to see the robot in RViz, start the ZED camera, run the
-GUI, and record force values together with camera images:
-
-```bash
-cd ~/NeuroMill_Final
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-ros2 launch neuro_final_teleop system.launch.py \
-  robot_ip:=192.168.1.243 \
-  config:=$(ros2 pkg prefix neuro_final_teleop)/share/neuro_final_teleop/config/neuro_final_drilling.yaml \
-  debug_topic_enable:=true \
-  trigger_enable:=true \
-  rumble_enable:=true
-```
-
-`system.launch.py` starts:
-
-- `robot_state_publisher` for the xArm7 model
-- ZED camera launch with `camera_model:=zed2i`
-- RViz
-- `ft_bridge`
-- `joint_state_bridge`
-- `neuro_final_teleop`
-- `session_gui`
-
-Useful variants:
-
-```bash
-# Open RViz/ZED/GUI/bridges without commanding the robot.
-ros2 launch neuro_final_teleop system.launch.py \
-  robot_ip:=192.168.1.243 \
-  start_teleop:=false
-
-# Run without the ZED camera.
-ros2 launch neuro_final_teleop system.launch.py \
-  robot_ip:=192.168.1.243 \
-  start_zed:=false
-
-# Use another ZED model if needed.
-ros2 launch neuro_final_teleop system.launch.py \
-  robot_ip:=192.168.1.243 \
-  camera_model:=zed2i
-```
-
-If RViz opens but the image panel is empty, check that the ZED topic is
-publishing:
-
-```bash
-ros2 topic hz /zed/zed_node/rgb/color/rect/image
-```
-
-You can inspect the live camera separately:
-
-```bash
-rqt_image_view /zed/zed_node/rgb/color/rect/image
-```
-
-## Controller Behavior
-
-The normal controller is a PS5 DualSense.
-
-| Control | Action |
-|---|---|
-| Hold Circle or R1 | Deadman; robot motion is allowed only while held |
-| R3 click | While holding deadman, click once to enter fixed-tip control |
-| Right stick | Fixed-tip angular control after R3/fixed-tip entry |
-| Cross | Capture/release fixed-tip mode as a shortcut |
-| Square | Force/torque tare |
-| Triangle | Orthogonal alignment action |
-| L1 | Move to the configured initial pose when enabled |
-| L2 / R2 | R2 inward/insertion, L2 outward/extraction |
-| Left stick | Base-frame X/Y planar motion in free mode |
-| D-pad up/down | Increase/decrease speed scale |
-| D-pad left/right | J7 trim when sticks are idle |
-| Create | Fault recovery, or quit when enabled |
-
-Frame convention:
-
-- Outside fixed-tip mode, X/Y/Z motion is base-frame motion.
-- Inside fixed-tip mode, right-stick angular control is tool-frame motion.
-- With the current insertion setting, R2 moves base `-Z` in free mode and
-  end-effector `+Z` in fixed-tip mode.
-
-## Config Profiles
-
-Config files live in `src/neuro_final_teleop/config/`.
-
-| Config | Use case |
-|---|---|
-| `neuro_final_default.yaml` | Normal teleop and balanced haptic settings |
-| `neuro_final_safe.yaml` | Slower first tests and close setup work |
-| `neuro_final_drilling.yaml` | Drilling-style insertion tests with higher FT limits and drilling haptic tuning |
-
-Run another profile:
-
-```bash
-ros2 launch neuro_final_teleop teleop.launch.py \
-  robot_ip:=192.168.1.243 \
-  config:=$(ros2 pkg prefix neuro_final_teleop)/share/neuro_final_teleop/config/neuro_final_safe.yaml
-```
-
-## Run Individual Nodes
-
-Use these commands when debugging one part at a time.
-
-```bash
-# Teleop node only
-ros2 run neuro_final_teleop neuro_final_teleop --ros-args \
-  -r __node:=neuro_final_teleop \
-  --params-file src/neuro_final_teleop/config/neuro_final_default.yaml \
-  -p robot_ip:=192.168.1.243
-
-# Force/torque bridge only
-ros2 run neuro_final_teleop ft_bridge --ros-args \
-  -p robot_ip:=192.168.1.243 \
-  -p publish_hz:=100.0
-
-# Joint-state bridge only
-ros2 run neuro_final_teleop joint_state_bridge --ros-args \
-  -p robot_ip:=192.168.1.243
-
-# Session GUI only
-ros2 run neuro_final_teleop session_gui
-```
-
-## Dry Run
-
-Dry run starts the teleop node without connecting to the robot.
-
-```bash
-ros2 launch neuro_final_teleop teleop.launch.py dry_run:=true
-```
-
-For a headless smoke test:
-
-```bash
-ros2 run neuro_final_teleop neuro_final_teleop --ros-args \
-  -p dry_run:=true \
-  -p enable_control_timer:=false
-```
-
-Dry run checks Python imports, ROS parameters, node startup, config loading, and
-topic/service setup. It does not test robot networking, ZED hardware, or
-DualSense haptic write access.
-
-## Session GUI And Recording
-
-The session GUI is started by `teleop.launch.py`, `system.launch.py`, or:
-
-```bash
-ros2 run neuro_final_teleop session_gui
-```
-
-Important GUI features:
-
-| GUI item | Purpose |
-|---|---|
-| Real-time FT values | Shows force/torque from `/xarm/ft_data` |
-| Live plots | Tracks force/torque over time |
-| Reset/Tare | Calls the FT tare/reset service |
-| Haptic mode buttons | Switches between both, vibration only, trigger only, or off |
-| Backend FT/Haptic Status | Shows debug state from `/neuro_final/ft_haptic_debug` |
-| Contact Debug Timeline | Shows selected force, haptic ratio, and contact state |
-| Free-space Noise Band | Runs a short calibration for contact tuning |
-| Start Recording | Starts `ros2 bag record` with FT, haptic debug, joints, TF, and ZED image topics |
-
-By default, recordings are saved under:
-
-```text
-~/NeuroFinal/recordings
-```
-
-Change the output folder before launching the GUI:
-
-```bash
-export NEURO_FINAL_RECORDING_ROOT=/path/to/recordings
-```
-
-The GUI records:
-
-```text
-/xarm/ft_data
-/neuro_final/ft_haptic_debug
-/joint_states
-/tf
-/tf_static
-/zed/zed_node/rgb/color/rect/image
-/zed/zed_node/rgb/color/rect/camera_info
-```
-
-A rosbag records only topics that are publishing at that moment. Before an
-important test, check:
-
-```bash
-ros2 topic hz /xarm/ft_data
-ros2 topic echo /neuro_final/ft_haptic_debug --once
-ros2 topic hz /joint_states
-ros2 topic hz /zed/zed_node/rgb/color/rect/image
-```
-
-Manual recording command:
-
-```bash
-mkdir -p recordings
-ros2 bag record \
-  -o recordings/manual_$(date +%Y_%m_%d_%H_%M_%S) \
-  /xarm/ft_data \
-  /neuro_final/ft_haptic_debug \
-  /joint_states \
-  /tf \
-  /tf_static \
-  /zed/zed_node/rgb/color/rect/image \
-  /zed/zed_node/rgb/color/rect/camera_info
-```
-
-Stop manual recording with `Ctrl+C`.
-
-## Playback
-
-Playback uses the `bag` folder inside a session folder. Do not play the session
-folder itself.
-
-Correct folder shape:
-
-```text
-recordings/
-  surgery_YYYY_MM_DD_HH_MM_SS/
-    bag/
-      metadata.yaml
-      bag_0.db3
-```
-
-Start playback visualization:
-
-```bash
-cd ~/NeuroMill_Final
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-ros2 launch neuro_final_teleop playback.launch.py
-```
-
-In another sourced terminal, play a bag:
-
-```bash
-cd ~/NeuroMill_Final
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-ros2 bag play recordings/<session_folder>/bag --loop --clock
-```
-
-Example with an absolute path:
-
-```bash
-ros2 bag play /home/islam/NeuroFinal/recordings/surgery_2026_06_24_18_49_14/bag --loop --clock
-```
-
-If your ROS 2 version treats `--clock` as an option that expects a number, use
-an explicit clock frequency:
-
-```bash
-ros2 bag play --loop --clock 100 /home/islam/NeuroFinal/recordings/surgery_2026_06_24_18_49_14/bag
-```
-
-Common mistakes:
-
-```bash
-# Wrong: --loop became part of the path.
-ros2 bag play /home/islam/NeuroFinal/recordings/--loop surgery_2026_06_24_18_49_14
-
-# Wrong: this is the session folder, not the actual bag folder.
-ros2 bag play --loop /home/islam/NeuroFinal/recordings/surgery_2026_06_24_18_49_14
-
-# Correct:
-ros2 bag play /home/islam/NeuroFinal/recordings/surgery_2026_06_24_18_49_14/bag --loop --clock
-```
-
-Inspect bag contents:
-
-```bash
-ros2 bag info recordings/<session_folder>/bag
-```
-
-View only the ZED image while the bag is playing:
-
-```bash
-rqt_image_view /zed/zed_node/rgb/color/rect/image
-```
-
-## Live Runtime Checks
-
-Run these in another sourced terminal:
-
-```bash
-ros2 node list
-ros2 topic list | sort
-ros2 topic hz /xarm/ft_data
-ros2 topic echo /neuro_final/ft_haptic_debug --once
-ros2 topic hz /joint_states
-ros2 topic hz /zed/zed_node/rgb/color/rect/image
-```
-
-Expected nodes during a full system run include:
-
-```text
-/ft_bridge
-/joint_state_bridge
-/neuro_final_teleop
-/session_gui
-/robot_state_publisher
-/rviz2
-```
-
-## Troubleshooting
-
-### Package Not Found
-
-```bash
-cd ~/NeuroMill_Final
-source /opt/ros/humble/setup.bash
-colcon build --symlink-install
-source install/setup.bash
 ros2 pkg prefix neuro_final_teleop
 ```
 
-### Robot Does Not Connect
+The command should return a path under this workspace's `install/` directory.
+
+## Build After Code Changes
 
 ```bash
-ping -c 3 192.168.1.243
+cd /home/yunbing/NeuroMill_Final
+source /opt/ros/jazzy/setup.bash
+
+colcon build \
+  --symlink-install \
+  --packages-select neuro_final_teleop
+
+source install/setup.bash
 ```
 
-Then relaunch with the same IP:
+Every new terminal must source both ROS and the workspace:
 
 ```bash
-ros2 launch neuro_final_teleop teleop.launch.py robot_ip:=192.168.1.243
+source /opt/ros/jazzy/setup.bash
+source /home/yunbing/NeuroMill_Final/install/setup.bash
 ```
 
-### GUI Has No Force Data
+## Hardware Checklist
+
+Before connecting the teleoperation node:
+
+- Confirm whether Studio is in **Sim** or **Real** mode.
+- Confirm that the intended robot is reachable at `192.168.1.243`.
+- Confirm that no other program is commanding the robot.
+- Connect the DualSense and check that pygame can see it.
+- Verify the active TCP offset and payload in UFACTORY Studio.
+- Keep motion speeds low for the first run.
+- Keep the emergency stop accessible.
+
+Check the controller:
 
 ```bash
-ros2 topic hz /xarm/ft_data
+ls -l /dev/input/js*
+
+python3 -c 'import pygame; pygame.init(); pygame.joystick.init(); print([(i, pygame.joystick.Joystick(i).get_name()) for i in range(pygame.joystick.get_count())])'
 ```
 
-If it is missing, run `teleop.launch.py`, `system.launch.py`, or `ft_bridge`.
+If DualSense haptic output lacks permission, install an appropriate `udev`
+rule for Sony VID `054c`, PID `0ce6`, then reconnect the controller.
 
-### Haptic Debug Is Missing
+## Calibrated Kinematics and TCP
+
+The robot-specific joint-origin parameters are stored in:
+
+```text
+src/external/xarm_description/config/kinematics/user/
+xarm7_kinematics_neuromill_check.yaml
+```
+
+They were exported from the xArm controller through
+`gen_kinematics_params.py`, which reads 42 controller-resident values
+(`7 joints × [x, y, z, roll, pitch, yaw]`) over TCP port 502.
+
+At runtime the YAML is loaded only into the local `KDLKinModel`; it is not
+written back to the controller:
+
+```text
+xArm controller calibration
+        ↓ export
+robot-specific kinematics YAML
+        ↓ load at node startup
+local KDL FK and Jacobian
+        ↓
+Tip-Lock and RCM solvers
+```
+
+The active UFACTORY controller TCP offset is read separately from
+`arm.tcp_offset`. Its XYZ translation is applied to local KDL FK and the tool
+Jacobian.
+
+Startup validation currently compares **TCP position only** between SDK and
+KDL. A small validation error proves numerical consistency between the two
+models at that pose; it does not prove physical drill-tip or drill-axis
+accuracy. TCP orientation and the physical shaft direction require separate
+multi-pose and physical validation.
+
+## Recommended Studio Sim RCM Run
+
+First put UFACTORY Studio in **Sim** mode. Then start the node with conservative
+values. The calibrated kinematics path and controller TCP must match the setup
+being tested.
 
 ```bash
-ros2 topic echo /neuro_final/ft_haptic_debug --once
+cd /home/yunbing/NeuroMill_Final
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+ros2 run neuro_final_teleop neuro_final_teleop --ros-args \
+  --params-file /home/yunbing/NeuroMill_Final/src/neuro_final_teleop/config/neuro_final_default.yaml \
+  -p robot_ip:=192.168.1.243 \
+  -p kinematics_yaml:=/home/yunbing/NeuroMill_Final/src/external/xarm_description/config/kinematics/user/xarm7_kinematics_neuromill_check.yaml \
+  -p require_simulation_robot:=false \
+  -p v7_rcm_enable:=true \
+  -p v7_rcm_insertion_enable:=true \
+  -p v7_rcm_max_insertion_mm_s:=1.0 \
+  -p v7_rcm_max_insertion_depth_mm:=5.0 \
+  -p v7_rcm_max_withdrawal_depth_mm:=3.0 \
+  -p v7_rcm_travel_slowdown_mm:=2.0 \
+  -p v7_rcm_max_angular_deg_s:=0.5
 ```
 
-If nothing arrives, launch with:
+`require_simulation_robot:=false` is used because the SDK has reported
+`Controller simulation mode: False` even while Studio Sim was selected. Always
+confirm the Studio **Sim/Real** selector visually before enabling motion.
+
+## DualSense Controls
+
+The current default deadman setting is `circle`; the input layer also accepts
+R1 while this setting is active.
+
+| Control | Free teleoperation | RCM mode |
+|---|---|---|
+| Hold Circle or R1 | Enable motion | Enable motion |
+| Options | Capture and enter RCM | Exit RCM |
+| Right stick | Cartesian orientation command | Tool-frame X/Y rotation |
+| R2 | Positive/inward depth command | Insertion |
+| L2 | Negative/outward depth command | Withdrawal |
+| Cross | Enter Tip-Lock | No RCM action |
+| R3 click | Toggle Tip-Lock when enabled | No RCM action |
+| Square | FT tare | No mode change |
+| Triangle | Orthogonal alignment | No mode change |
+| L1 | Move to configured initial joint pose | Not handled until RCM is exited |
+| D-pad up/down | Change speed scale | Change speed scale |
+| D-pad left/right | J7 trim when allowed | — |
+| Create | Recovery or quit, depending on state | Recovery or quit |
+
+Important RCM behavior:
+
+1. Move the tool tip to the intended entry point.
+2. Press **Options** to capture that point and enter RCM.
+3. Hold the deadman.
+4. Use the right stick for constrained rotation.
+5. Use R2/L2 for insertion/withdrawal when insertion is enabled.
+6. Press **Options** again to exit RCM.
+
+L1 uses `initial_pose_joint_deg_csv` unless
+`initial_pose_use_startup:=true`. It is a joint-space target, not the RCM
+capture pose.
+
+## RCM Parameters
+
+The RCM parameters are declared in `neuro_final_teleop.py`. Important defaults
+are:
+
+| Parameter | Default | Meaning |
+|---|---:|---|
+| `v7_rcm_enable` | `true` | Enable RCM mode |
+| `v7_rcm_insertion_enable` | `false` | Allow L2/R2 motion in RCM |
+| `v7_rcm_max_angular_deg_s` | `5.0` | Maximum operator rotation speed |
+| `v7_rcm_max_insertion_mm_s` | `5.0` | Maximum insertion/withdrawal speed |
+| `v7_rcm_max_insertion_depth_mm` | `20.0` | Positive travel limit from capture |
+| `v7_rcm_max_withdrawal_depth_mm` | `10.0` | Negative travel limit from capture |
+| `v7_rcm_travel_slowdown_mm` | `5.0` | Soft slowdown width near a limit |
+| `v7_rcm_correction_gain_s` | `12.0` | P1 error correction gain |
+| `v7_rcm_max_correction_mm_s` | `10.0` | Maximum P1 correction speed |
+| `v7_rcm_damping` | `0.025` | Damped pseudoinverse parameter |
+| `v7_rcm_qdot_limit_rad_s` | `0.40` | Joint velocity limit |
+| `v7_rcm_qddot_limit_rad_s2` | `1.50` | Joint acceleration limit |
+
+The characteristic length is currently calculated as:
+
+```text
+characteristic_length_m =
+    (maximum insertion speed in m/s) / (maximum angular speed in rad/s)
+```
+
+Consequently, changing either maximum speed also changes the relative scaling
+inside P2. This coupling is under evaluation and should be considered when
+interpreting rotation-tracking results.
+
+## Compact RCM Diagnostics
+
+The main node publishes JSON diagnostics on:
+
+```text
+/neuro_final/rcm_diagnostics
+```
+
+Check one complete message:
 
 ```bash
-debug_topic_enable:=true
+ros2 topic echo \
+  /neuro_final/rcm_diagnostics \
+  std_msgs/msg/String \
+  --once \
+  --full-length
 ```
 
-### ZED Image Is Missing
-
-Check the camera and topic:
+Start the compact logger in a second sourced terminal:
 
 ```bash
-ros2 topic list | grep zed
-ros2 topic hz /zed/zed_node/rgb/color/rect/image
+cd /home/yunbing/NeuroMill_Final
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+ros2 run neuro_final_teleop rcm_diagnostics_logger --ros-args \
+  -p output_dir:=/home/yunbing/NeuroMill_Final/rcm_logs/compact_runs/run_01
 ```
 
-If no image topic exists, verify the ZED SDK can see the camera and relaunch
-`system.launch.py`.
+Stop it with `Ctrl+C`. It writes a timestamped CSV and prints a summary.
 
-### Bag Does Not Play
-
-Check that you are pointing to the inner `bag` folder:
+Analyze one compact CSV:
 
 ```bash
-find ~/NeuroFinal/recordings -maxdepth 3 -name metadata.yaml -print
-ros2 bag info /home/islam/NeuroFinal/recordings/<session_folder>/bag
+python3 src/neuro_final_teleop/experiments/analyze_compact_rcm_csv.py \
+  rcm_logs/compact_runs/run_01/rcm_YYYYMMDD_HHMMSS.csv
 ```
 
-Then play:
+See [rcm_logs/README.md](rcm_logs/README.md) for the 13 CSV fields, retained
+experiments, metric definitions, and interpretation limits.
+
+The reported lateral RCM error is computed from encoder joint feedback and the
+same calibrated KDL model used by the controller. It is useful for controller
+and model consistency, but it is not an independent physical measurement. A
+physical RCM-accuracy claim requires an external reference such as optical
+tracking or a measured entry-point fixture.
+
+## Other Runtime Components
+
+| Executable | Purpose |
+|---|---|
+| `neuro_final_teleop` | Main teleoperation and RCM node |
+| `ft_bridge` | Publish xArm force/torque data |
+| `joint_state_bridge` | Publish `/joint_states` |
+| `session_gui` | FT/haptic monitoring and rosbag recording |
+| `rcm_diagnostics_logger` | Record compact RCM CSV data |
+
+The normal non-RCM launch is:
 
 ```bash
-ros2 bag play /home/islam/NeuroFinal/recordings/<session_folder>/bag --loop --clock
+ros2 launch neuro_final_teleop teleop.launch.py \
+  robot_ip:=192.168.1.243
 ```
+
+### Full RViz/ZED launch status
+
+`system.launch.py` is not currently the recommended startup path. Its ZED
+include block is commented out while the launch description still references
+`zed_camera_launch`. Fix and test that launch file before using it for a formal
+experiment.
+
+## Dry Run
+
+Dry run checks imports, parameters, and node construction without connecting
+to the robot:
+
+```bash
+cd /home/yunbing/NeuroMill_Final
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+NEURO_FINAL_DRY_RUN=1 \
+ros2 run neuro_final_teleop neuro_final_teleop --ros-args \
+  -p enable_control_timer:=false
+```
+
+Dry run does not validate robot networking, physical motion, TCP calibration,
+or DualSense hardware behavior.
 
 ## Development Checks
 
-Before pushing code changes:
+Run before committing controller changes:
 
 ```bash
-python3 -m compileall -q src/neuro_final_teleop/neuro_final_teleop
-colcon list
+cd /home/yunbing/NeuroMill_Final
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+python3 -m compileall -q \
+  src/neuro_final_teleop/neuro_final_teleop
+
+ROS_LOG_DIR=/tmp/neuro_rcm_test_logs \
+python3 -m pytest -q \
+  src/neuro_final_teleop/test/test_rcm_controller.py \
+  src/neuro_final_teleop/test/test_rcm_kdl.py \
+  src/neuro_final_teleop/test/test_rcm_node_dry_run.py \
+  src/neuro_final_teleop/test/test_rcm_state_flow.py
+
+colcon build \
+  --symlink-install \
+  --packages-select neuro_final_teleop
 ```
 
-For a fuller local check:
+## Known Limitations and Open Validation Work
+
+- SDK-versus-KDL agreement proves model consistency, not absolute physical
+  accuracy.
+- Startup kinematic validation currently checks TCP XYZ only, not orientation.
+- The solver currently assumes the physical shaft is aligned with tool `+Z`.
+- The physical drill-axis offset must be measured and incorporated before
+  claiming physical RCM accuracy.
+- The characteristic length is coupled to the configured maximum insertion and
+  rotation speeds.
+- Combined rotation-and-insertion tests across a broad range of poses are still
+  required.
+- Real-robot tests must follow successful software and Studio Sim validation.
+- `system.launch.py` requires repair before it can reliably launch the complete
+  RViz/ZED stack.
+
+## Git Workflow
+
+Develop features on a branch rather than directly on `main`:
 
 ```bash
-source /opt/ros/humble/setup.bash
-colcon build --symlink-install
+git switch main
+git pull personal main
+git switch -c <feature-branch>
+```
+
+Before pushing:
+
+```bash
+git diff --check
+git status --short
 ```
