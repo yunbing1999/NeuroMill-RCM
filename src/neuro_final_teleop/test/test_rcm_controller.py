@@ -296,6 +296,10 @@ def test_insertion_slows_near_positive_limit():
         abs=0.1,
     )
     assert result.limited is True
+    assert result.travel_limited is True
+    assert result.joint_velocity_limited is False
+    assert result.requested_insertion_mm_s == pytest.approx(5.0)
+    assert result.target_insertion_mm_s == pytest.approx(2.0)
 
 
 def test_repeated_insertion_stays_inside_positive_limit():
@@ -642,3 +646,5 @@ def test_joint_velocity_limit():
     ) <= 0.100001
 
     assert result.limited is True
+    assert result.travel_limited is False
+    assert result.joint_velocity_limited is True
