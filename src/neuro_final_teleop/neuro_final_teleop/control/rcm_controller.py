@@ -96,13 +96,15 @@ class RCMController:
         self._captured_axis = None
         self._prev_qdot[:] = 0.0
 
-    def _tool_state(self, q_rad, tcp_offset_m):
+    def _tool_state(self, q_rad, tcp_offset_m, tcp_rotation=None):
         """Return the current tool tip and normalized shaft axis."""
 
-        tip, rotation = self.kin.fk_tool(
-            [float(v) for v in q_rad[:7]],
-            [float(v) for v in tcp_offset_m[:3]],
-        )
+        q = [float(v) for v in q_rad[:7]]
+        offset = [float(v) for v in tcp_offset_m[:3]]
+        if tcp_rotation is None:
+            tip, rotation = self.kin.fk_tool(q, offset)
+        else:
+            tip, rotation = self.kin.fk_tool(q, offset, tcp_rotation)
         tip = np.asarray(tip, dtype=float).reshape(3)
         rotation = np.asarray(rotation, dtype=float).reshape(3, 3)
 
@@ -121,6 +123,7 @@ class RCMController:
         self,
         q_rad: List[float],
         tcp_offset_m: Optional[List[float]],
+        tcp_rotation: Optional[np.ndarray] = None,
     ) -> bool:
         """Capture the current effective tool tip as the RCM entry point.
 
@@ -130,6 +133,8 @@ class RCMController:
             Current seven robot joint positions in radians.
         tcp_offset_m:
             Effective tool-tip translation relative to the flange, in metres.
+        tcp_rotation:
+            Optional 3x3 flange-to-tool rotation matrix.
 
         Returns
         -------
@@ -144,7 +149,11 @@ class RCMController:
             tcp_offset_m = [0.0, 0.0, 0.0]
 
         try:
-            tip, shaft_axis = self._tool_state(q_rad, tcp_offset_m)
+            tip, shaft_axis = self._tool_state(
+                q_rad,
+                tcp_offset_m,
+                tcp_rotation,
+            )
         except Exception:
             return False
 
@@ -269,6 +278,7 @@ class RCMController:
         desired_insertion_m_s: float,
         tcp_offset_m: Optional[List[float]],
         dt_s: float,
+        tcp_rotation: Optional[np.ndarray] = None,
     ) -> RCMResult:
         """Calculate joint velocity while preserving the captured RCM.
 
@@ -301,7 +311,7 @@ class RCMController:
             dtype=float,
         )
 
-        tip, shaft_axis = self._tool_state(q, tcp_offset_m)
+        tip, shaft_axis = self._tool_state(q, tcp_offset_m, tcp_rotation)
 
         # -------------------------------------------------------------
         # RCM geometry

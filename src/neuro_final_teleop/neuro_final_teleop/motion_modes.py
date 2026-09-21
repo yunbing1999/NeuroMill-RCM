@@ -286,6 +286,7 @@ class MotionModesMixin:
                 desired_insertion_m_s=desired_insertion_m_s,
                 tcp_offset_m=tcp_m,
                 dt_s=self.dt,
+                tcp_rotation=self._robot_tcp_rotation(),
             )
         except Exception as exc:
             self._v7_rcm_joint_cmd_rad_s = [0.0] * 7
@@ -821,6 +822,7 @@ class MotionModesMixin:
         captured = self._v7_rcm_controller.capture(
             [float(value) for value in joints[:7]],
             tcp_offset_m,
+            tcp_rotation=self._robot_tcp_rotation(),
         )
 
         if not captured:

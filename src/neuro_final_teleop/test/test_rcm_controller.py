@@ -7,12 +7,13 @@ from neuro_final_teleop.control.rcm_controller import (
     RCMConfig,
     RCMController,
 )
+from neuro_final_teleop.control.math_utils import rpy_deg_to_rotmat
 
 
 class FakeKinematics:
     """Simple deterministic kinematics used only for controller tests."""
 
-    def fk_tool(self, q_rad, tcp_offset_m=None):
+    def fk_tool(self, q_rad, tcp_offset_m=None, tcp_rotation=None):
         q = np.asarray(q_rad[:7], dtype=float)
 
         position = [
@@ -21,7 +22,11 @@ class FakeKinematics:
             float(q[2]),
         ]
 
-        rotation = np.eye(3, dtype=float)
+        rotation = (
+            np.eye(3, dtype=float)
+            if tcp_rotation is None
+            else np.asarray(tcp_rotation, dtype=float)
+        )
         return position, rotation
 
     def tool_jacobian(self, q_rad, tcp_offset_m=None):
@@ -102,6 +107,63 @@ def test_capture_records_tip_and_axis():
 
     assert controller.captured_axis == pytest.approx(
         [0.0, 0.0, 1.0]
+    )
+
+
+def test_capture_uses_rotated_tcp_shaft_axis():
+    controller = make_controller()
+    tcp_rotation = rpy_deg_to_rotmat(4.47, 2.77, 7.13)
+
+    assert controller.capture(
+        [0.0] * 7,
+        [0.0] * 3,
+        tcp_rotation=tcp_rotation,
+    )
+
+    assert controller.captured_axis == pytest.approx(
+        tcp_rotation[:, 2]
+    )
+
+
+def test_rotated_axis_defines_rcm_geometry():
+    length_m = 0.100
+    tcp_rotation = rpy_deg_to_rotmat(4.47, 2.77, 7.13)
+    rotated_axis = tcp_rotation[:, 2]
+
+    rotated = make_controller()
+    assert rotated.capture(
+        [0.0] * 7,
+        [0.0] * 3,
+        tcp_rotation=tcp_rotation,
+    )
+    rotated._entry_point_m = length_m * rotated_axis
+    correct = rotated.solve(
+        q_rad=[0.0] * 7,
+        desired_angular_rad_s=[0.0] * 3,
+        desired_insertion_m_s=0.0,
+        tcp_offset_m=[0.0] * 3,
+        dt_s=0.01,
+        tcp_rotation=tcp_rotation,
+    )
+
+    omitted = make_controller()
+    assert omitted.capture([0.0] * 7, [0.0] * 3)
+    omitted._entry_point_m = length_m * rotated_axis
+    wrong = omitted.solve(
+        q_rad=[0.0] * 7,
+        desired_angular_rad_s=[0.0] * 3,
+        desired_insertion_m_s=0.0,
+        tcp_offset_m=[0.0] * 3,
+        dt_s=0.01,
+    )
+
+    tilt_rad = math.acos(float(rotated_axis @ np.array([0.0, 0.0, 1.0])))
+    expected_wrong_mm = length_m * math.sin(tilt_rad) * 1000.0
+
+    assert correct.lateral_error_mm == pytest.approx(0.0, abs=1e-10)
+    assert wrong.lateral_error_mm == pytest.approx(
+        expected_wrong_mm,
+        abs=1e-10,
     )
 
 

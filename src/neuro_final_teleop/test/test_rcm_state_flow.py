@@ -1,4 +1,5 @@
 import math
+import numpy as np
 from neuro_final_teleop.control.state_machine import (
     StateMachine,
     TeleopState,
@@ -41,9 +42,11 @@ class FakeRCMController:
     def __init__(self):
         self.entry_point_m = None
         self.captured_axis = None
+        self.tcp_rotation = None
         self.reset_called = False
 
-    def capture(self, joints, tcp_offset_m):
+    def capture(self, joints, tcp_offset_m, tcp_rotation=None):
+        self.tcp_rotation = tcp_rotation
         self.entry_point_m = [
             0.100,
             0.200,
@@ -103,6 +106,9 @@ class RCMStateFlowHost(MotionModesMixin, DummyBase):
     def _effective_tcp_translation_mm(self):
         return [0.0, 0.0, 150.0]
 
+    def _robot_tcp_rotation(self):
+        return np.eye(3)
+
     def _pulse_haptic(
         self,
         strength,
@@ -153,6 +159,10 @@ def test_options_rcm_capture_and_exit_flow():
         0.200,
         0.300,
     ]
+    assert np.array_equal(
+        host._v7_rcm_controller.tcp_rotation,
+        np.eye(3),
+    )
 
     # Second Options press exits RCM.
     host._handle_button_actions(
@@ -201,6 +211,9 @@ class RCMRotationHost(MotionModesMixin):
     def _effective_tcp_translation_mm(self):
         return [0.0, 0.0, 150.0]
 
+    def _robot_tcp_rotation(self):
+        return np.eye(3)
+
     def _warn_throttle(self, key, text, interval):
         raise AssertionError(text)
 
@@ -222,6 +235,7 @@ def test_right_stick_generates_rcm_joint_command():
     # Rotation phase must keep insertion disabled.
     assert arguments["desired_insertion_m_s"] == 0.0
     assert arguments["tcp_offset_m"] == [0.0, 0.0, 0.15]
+    assert np.array_equal(arguments["tcp_rotation"], np.eye(3))
 
     # Right-stick X should request angular motion.
     assert abs(arguments["desired_angular_rad_s"][0]) > 0.0
