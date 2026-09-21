@@ -21,6 +21,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 import rclpy
+import numpy as np
 from geometry_msgs.msg import WrenchStamped
 from rclpy.node import Node
 
@@ -40,7 +41,7 @@ def _import_xarm_api():
 from .ft_guard import FTGuard, FTGuardConfig, StalePolicy
 from neuro_final_teleop.input.gamepad import InputConfig, InputSnapshot, XboxInput
 from .kinematics import (KDLKinModel,load_joint_origins,)
-from .math_utils import clamp, sigmoid_shape
+from .math_utils import clamp, rpy_deg_to_rotmat, sigmoid_shape
 from .tip_lock_controller import TipLockConfig, TipLockController
 from .safety import (
     JointRiskConfig,
@@ -620,7 +621,24 @@ class TeleopV4Node(Node):
             return [0.0] * 6
 
     def _virtual_tip_xyz_mm(self) -> List[float]:
+        """Software tip translation in the flange frame.
+
+        A future drill-axis extension should instead be expressed in the
+        rotated tool frame. Current behavior is retained for compatibility.
+        """
         return [self.virtual_tip_x_mm, self.virtual_tip_y_mm, self.virtual_tip_z_mm]
+
+    def _robot_tcp_rotation(self) -> np.ndarray:
+        """Return controller flange-to-TCP rotation from degree RPY values."""
+        tcp_offset = self._robot_tcp_offset_list()
+        if len(tcp_offset) < 6:
+            return np.eye(3)
+        try:
+            return rpy_deg_to_rotmat(
+                *[float(value) for value in tcp_offset[3:6]]
+            )
+        except (TypeError, ValueError):
+            return np.eye(3)
 
     def _effective_tcp_translation_mm(self) -> List[float]:
         return self.kin.effective_tcp_translation_mm(
@@ -1042,6 +1060,14 @@ class TeleopV4Node(Node):
         except Exception:
             tcp_ld = [0.0] * 4
         self.get_logger().info(f"Robot config | tcp_offset={tcp_off} | tcp_load={tcp_ld}")
+        tcp_rotation = self._robot_tcp_rotation()
+        tcp_rpy = (tcp_off + [0.0] * 6)[3:6]
+        tool_z = tcp_rotation[:, 2]
+        self.get_logger().info(
+            "Robot TCP rotation | "
+            f"rpy_deg=({tcp_rpy[0]:.2f},{tcp_rpy[1]:.2f},{tcp_rpy[2]:.2f}) "
+            f"| tool_z_flange=({tool_z[0]:.5f},{tool_z[1]:.5f},{tool_z[2]:.5f})"
+        )
         self.get_logger().info(
             f"Tip model | virtual_tip_mm=({self.virtual_tip_x_mm:.2f},{self.virtual_tip_y_mm:.2f},"
             f"{self.virtual_tip_z_mm:.2f}) | validate_with_tcp={self.validate_with_tcp} "
@@ -1072,8 +1098,15 @@ class TeleopV4Node(Node):
                 tcp_offset_mm_deg=tcp_off,
                 virtual_tip_offset_mm=virt,
                 validate_with_tcp=self.validate_with_tcp,
+                tcp_rotation=self._robot_tcp_rotation(),
             )
             self.get_logger().info(f"[KIN] Kinematic validation: {result.detail}")
+            if result.orientation_error_deg > 1.0:
+                self.get_logger().warn(
+                    "[KIN] TCP orientation mismatch: "
+                    f"{result.orientation_error_deg:.3f}deg > 1.000deg "
+                    "(warning only)"
+                )
             eff = self.kin.effective_tcp_translation_mm(tcp_off, virt)
             tcp_mode = self.validate_with_tcp and (abs(eff[0]) + abs(eff[1]) + abs(eff[2]) > 1.0)
             if result.valid:
@@ -1093,8 +1126,7 @@ class TeleopV4Node(Node):
                 self._constrained_modes_enabled = False
                 self.get_logger().warn(
                     "[KIN] Model NOT validated -- constrained modes DISABLED. "
-                    "Check URDF vs arm, joint units, or tcp_offset vs Studio (large RPY on "
-                    "TCP is not fully modeled in validation)."
+                    "Check URDF vs arm, joint units, or tcp_offset vs Studio."
                 )
         except Exception as exc:
             self.get_logger().warn(f"[KIN] Validation exception: {exc}")

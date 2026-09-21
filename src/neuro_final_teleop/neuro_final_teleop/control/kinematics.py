@@ -17,9 +17,10 @@ Frame semantics (xArm Python SDK, typical on hardware):
     ``controller_tcp_xyz + virtual_tip_xyz`` (mm), software-only beyond the
     controller.
 
-    TCP offset **orientation** (roll/pitch/yaw) is not applied in ``fk_tool``
-    for validation—only ``[x,y,z]`` mm.  Pure-Z (or small) tool extensions match
-    well; large RPY offsets may need a future full transform.
+    TCP offset orientation is supplied to ``fk_tool`` as an explicit rotation
+    matrix.  The full tool pose is therefore
+    ``p_tool = p_flange + R_flange @ t`` and
+    ``R_tool = R_flange @ R_offset``.
 
 DATA SOURCES
 ------------
@@ -41,6 +42,8 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import numpy as np
+
+from .math_utils import rpy_deg_to_rotmat
 
 try:
     import PyKDL
@@ -128,6 +131,7 @@ NUM_JOINTS = 7
 class ValidationResult:
     valid: bool
     position_error_mm: float
+    orientation_error_deg: float
     detail: str
 
 
@@ -250,23 +254,34 @@ class KDLKinModel:
         self,
         q_rad: List[float],
         tcp_offset_m: Optional[List[float]] = None,
+        tcp_rotation: Optional[np.ndarray] = None,
     ) -> Tuple[List[float], np.ndarray]:
-        """FK to **tool tip / TCP** (flange + translation in flange frame).
+        """FK to the tool/TCP using an explicit flange-to-tool rotation.
 
         Applies ``tcp_offset`` translation in the **flange** frame (metres)
         on top of ``fk_flange``: ``p_tcp = p_flange + R_flange @ offset_m``.
 
         tcp_offset_m: at least ``[x, y, z]`` in metres; orientation entries
-        are ignored for the position part.
+        are not accepted here. ``tcp_rotation`` is a 3x3 flange-to-tool
+        rotation matrix. ``None`` means identity for backward compatibility.
         """
         pos_f, R_f = self.fk_flange(q_rad)
+        R_tool = R_f
+        if tcp_rotation is not None:
+            R_offset = np.asarray(tcp_rotation, dtype=float).reshape(3, 3)
+            if not np.array_equal(R_offset, np.eye(3)):
+                R_tool = R_f @ R_offset
+
         if tcp_offset_m is None or len(tcp_offset_m) < 3:
-            return pos_f, R_f
+            return pos_f, R_tool
+
         off_base = R_f @ np.array(tcp_offset_m[:3])
-        pos_t = [pos_f[0] + off_base[0],
-                 pos_f[1] + off_base[1],
-                 pos_f[2] + off_base[2]]
-        return pos_t, R_f
+        pos_t = [
+            pos_f[0] + off_base[0],
+            pos_f[1] + off_base[1],
+            pos_f[2] + off_base[2],
+        ]
+        return pos_t, R_tool
 
     # ── Jacobian ──────────────────────────────────────────────────────
 
@@ -293,6 +308,9 @@ class KDLKinModel:
         Adjusts the linear part to account for the lever arm from flange
         to TCP:   J_v_tool = J_v - [p]_x @ J_w
         where p is the TCP offset in base frame.
+
+        TCP rotation does not change this Jacobian: the lever arm depends
+        only on translation, and angular velocity is frame-point invariant.
         """
         J = self.jacobian(q_rad)
         if tcp_offset_m is None or len(tcp_offset_m) < 3:
@@ -362,12 +380,15 @@ class KDLKinModel:
         tcp_offset_mm_deg: Optional[List[float]] = None,
         virtual_tip_offset_mm: Optional[List[float]] = None,
         validate_with_tcp: bool = True,
+        tcp_rotation: Optional[np.ndarray] = None,
     ) -> ValidationResult:
-        """Position-only FK vs SDK ``get_position()`` xyz.
+        """Validate model position and orientation against SDK TCP pose.
 
         If ``validate_with_tcp`` is False: always ``fk_flange`` vs SDK.
         If effective ``|dx|+|dy|+|dz| <= 1`` mm: flange path.
         Else ``fk_tool`` with ``(controller+virtual)`` mm converted to metres.
+
+        Orientation error is diagnostic only and does not affect ``valid``.
         """
         sdk_pos_mm = [float(sdk_pose_mm_deg[i]) for i in range(3)]
         eff_mm = self.effective_tcp_translation_mm(
@@ -376,16 +397,22 @@ class KDLKinModel:
         sum_eff = abs(eff_mm[0]) + abs(eff_mm[1]) + abs(eff_mm[2])
 
         if not validate_with_tcp:
-            fk_pos_m, _ = self.fk_flange(joint_angles_rad)
+            fk_pos_m, R_f = self.fk_flange(joint_angles_rad)
+            R_kdl = R_f if tcp_rotation is None else R_f @ tcp_rotation
             mode = "forced_flange"
             label_fk, label_sdk = "flange FK", "SDK xyz"
         elif sum_eff <= 1.0:
-            fk_pos_m, _ = self.fk_flange(joint_angles_rad)
+            fk_pos_m, R_f = self.fk_flange(joint_angles_rad)
+            R_kdl = R_f if tcp_rotation is None else R_f @ tcp_rotation
             mode = "flange"
             label_fk, label_sdk = "flange FK", "SDK xyz"
         else:
             tcp_m = [eff_mm[i] / 1000.0 for i in range(3)]
-            fk_pos_m, _ = self.fk_tool(joint_angles_rad, tcp_m)
+            fk_pos_m, R_kdl = self.fk_tool(
+                joint_angles_rad,
+                tcp_m,
+                tcp_rotation,
+            )
             mode = "tool_tcp_effective"
             label_fk, label_sdk = "tool FK(eff)", "SDK TCP"
 
@@ -396,6 +423,16 @@ class KDLKinModel:
         self._validation_error_mm = err
         self._validated = err < tolerance_mm
 
+        orientation_error_deg = float("nan")
+        if len(sdk_pose_mm_deg) >= 6:
+            R_sdk = rpy_deg_to_rotmat(
+                *[float(value) for value in sdk_pose_mm_deg[3:6]]
+            )
+            cosine = (np.trace(R_kdl.T @ R_sdk) - 1.0) * 0.5
+            orientation_error_deg = math.degrees(
+                math.acos(float(np.clip(cosine, -1.0, 1.0)))
+            )
+
         detail = (
             f"{label_fk}({fk_pos_mm[0]:.1f},{fk_pos_mm[1]:.1f},{fk_pos_mm[2]:.1f}) "
             f"vs {label_sdk} ({sdk_pos_mm[0]:.1f},{sdk_pos_mm[1]:.1f},{sdk_pos_mm[2]:.1f}) "
@@ -403,11 +440,13 @@ class KDLKinModel:
         )
         detail += (
             f" | eff_tcp_trans_mm=({eff_mm[0]:.2f},{eff_mm[1]:.2f},{eff_mm[2]:.2f})"
+            f" | orientation_err={orientation_error_deg:.3f}deg"
         )
 
         return ValidationResult(
             valid=self._validated,
             position_error_mm=err,
+            orientation_error_deg=orientation_error_deg,
             detail=detail,
         )
 
