@@ -1,6 +1,6 @@
 neuro_final_teleop:
   ros__parameters:
-    robot_ip: "192.168.1.225"
+    robot_ip: "192.168.1.243"
     dry_run: false
     loop_hz: 120.0
     velocity_watchdog_s: 0.0
@@ -12,7 +12,7 @@ neuro_final_teleop:
     v7_speed_scale_max: 1.0
     v7_speed_scale_step: 0.05
     initial_pose_use_startup: false
-    initial_pose_joint_deg_csv: "40.1,-50,-2.1,60,0.7,110,-1.1"
+    initial_pose_joint_deg_csv: "0,-40,0,75,0,115.1,1.5"
     tip_lock_max_angular_deg_s: 6.0
     v7_tip_lock_r3_toggle_enable: true
     v7_tip_lock_right_stick_control: true
