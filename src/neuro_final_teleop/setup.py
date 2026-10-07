@@ -16,6 +16,8 @@ setup(
         (os.path.join("share", package_name, "launch"), glob("launch/*.launch.py")),
         (os.path.join("share", package_name, "config"), glob("config/*.yaml")),
         (os.path.join("share", package_name, "rviz"), glob("rviz/*.rviz")),
+        (os.path.join("share", package_name, "urdf"), glob("urdf/*.xacro")),
+        (os.path.join("share", package_name, "meshes", "milling"), glob("meshes/milling/*.stl")),
         (os.path.join("share", package_name, "assets"), glob("neuro_final_teleop/assets/*.jpg")),
     ],
     install_requires=[
@@ -43,13 +45,8 @@ setup(
             "ft_bridge = neuro_final_teleop.nodes.ft_bridge:main",
             "joint_state_bridge = neuro_final_teleop.nodes.joint_state_bridge:main",
             "session_gui = neuro_final_teleop.nodes.session_gui:main",
-        ],
-        "console_scripts": [
-            "neuro_final_teleop = neuro_final_teleop.neuro_final_teleop:main",
-            "ft_bridge = neuro_final_teleop.nodes.ft_bridge:main",
-            "joint_state_bridge = neuro_final_teleop.nodes.joint_state_bridge:main",
-            "session_gui = neuro_final_teleop.nodes.session_gui:main",
             "rcm_diagnostics_logger = neuro_final_teleop.nodes.rcm_diagnostics_logger:main",
+            "rcm_visualizer = neuro_final_teleop.nodes.rcm_visualizer:main",
         ],
     },
 )

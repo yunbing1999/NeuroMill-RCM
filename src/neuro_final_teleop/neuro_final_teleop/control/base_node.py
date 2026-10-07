@@ -244,10 +244,7 @@ class TeleopV4Node(Node):
         P("initial_pose_speed_deg_s", 20.0)
         P("initial_pose_mvacc_deg_s2", 200.0)
         P("initial_pose_timeout_s", 20.0)
-        # Software-only tip refinement (mm, flange-frame); never sent to controller.
-        P("virtual_tip_x_mm", 0.0)
-        P("virtual_tip_y_mm", 0.0)
-        P("virtual_tip_z_mm", 0.0)
+        # Validate the controller-configured TCP against the kinematic model.
         P("validate_with_tcp", True)
         P("tcp_validation_tol_mm", 15.0)
         P("tcp_validation_grace_mm", 5.0)
@@ -289,9 +286,6 @@ class TeleopV4Node(Node):
         self.initial_pose_speed_deg_s = float(G("initial_pose_speed_deg_s"))
         self.initial_pose_mvacc_deg_s2 = float(G("initial_pose_mvacc_deg_s2"))
         self.initial_pose_timeout_s = float(G("initial_pose_timeout_s"))
-        self.virtual_tip_x_mm = float(G("virtual_tip_x_mm"))
-        self.virtual_tip_y_mm = float(G("virtual_tip_y_mm"))
-        self.virtual_tip_z_mm = float(G("virtual_tip_z_mm"))
         self.validate_with_tcp = bool(G("validate_with_tcp"))
         self.tcp_validation_tol_mm = float(G("tcp_validation_tol_mm"))
         self.tcp_validation_grace_mm = float(G("tcp_validation_grace_mm"))
@@ -620,14 +614,6 @@ class TeleopV4Node(Node):
         except Exception:
             return [0.0] * 6
 
-    def _virtual_tip_xyz_mm(self) -> List[float]:
-        """Software tip translation in the flange frame.
-
-        A future drill-axis extension should instead be expressed in the
-        rotated tool frame. Current behavior is retained for compatibility.
-        """
-        return [self.virtual_tip_x_mm, self.virtual_tip_y_mm, self.virtual_tip_z_mm]
-
     def _robot_tcp_rotation(self) -> np.ndarray:
         """Return controller flange-to-TCP rotation from degree RPY values."""
         tcp_offset = self._robot_tcp_offset_list()
@@ -642,7 +628,7 @@ class TeleopV4Node(Node):
 
     def _effective_tcp_translation_mm(self) -> List[float]:
         return self.kin.effective_tcp_translation_mm(
-            self._robot_tcp_offset_list(), self._virtual_tip_xyz_mm(),
+            self._robot_tcp_offset_list(),
         )
 
     def _effective_tip_pose_mm_deg(self, joints_rad: List[float]) -> Optional[List[float]]:
@@ -1069,9 +1055,7 @@ class TeleopV4Node(Node):
             f"| tool_z_flange=({tool_z[0]:.5f},{tool_z[1]:.5f},{tool_z[2]:.5f})"
         )
         self.get_logger().info(
-            f"Tip model | virtual_tip_mm=({self.virtual_tip_x_mm:.2f},{self.virtual_tip_y_mm:.2f},"
-            f"{self.virtual_tip_z_mm:.2f}) | validate_with_tcp={self.validate_with_tcp} "
-            f"| tcp_validation_tol_mm={self.tcp_validation_tol_mm:.2f}"
+            f"TCP model | validate_with_tcp={self.validate_with_tcp} | tcp_validation_tol_mm={self.tcp_validation_tol_mm:.2f}"
         )
 
     # =====================================================================
@@ -1090,13 +1074,11 @@ class TeleopV4Node(Node):
                 tcp_off = list(self.arm.tcp_offset) if self.arm.tcp_offset else [0.0] * 6
             except Exception:
                 tcp_off = [0.0] * 6
-            virt = self._virtual_tip_xyz_mm()
             result = self.kin.validate_against_sdk(
                 pose,
                 joints,
                 tolerance_mm=self.tcp_validation_tol_mm,
                 tcp_offset_mm_deg=tcp_off,
-                virtual_tip_offset_mm=virt,
                 validate_with_tcp=self.validate_with_tcp,
                 tcp_rotation=self._robot_tcp_rotation(),
             )
@@ -1107,7 +1089,7 @@ class TeleopV4Node(Node):
                     f"{result.orientation_error_deg:.3f}deg > 1.000deg "
                     "(warning only)"
                 )
-            eff = self.kin.effective_tcp_translation_mm(tcp_off, virt)
+            eff = self.kin.effective_tcp_translation_mm(tcp_off)
             tcp_mode = self.validate_with_tcp and (abs(eff[0]) + abs(eff[1]) + abs(eff[2]) > 1.0)
             if result.valid:
                 self._constrained_modes_enabled = True

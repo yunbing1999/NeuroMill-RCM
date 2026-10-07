@@ -18,3 +18,7 @@ htmlcov/
 *.npz
 *.npy
 recordings/
+
+# Local experiment outputs
+/rcm_logs/*
+!/rcm_logs/README.md

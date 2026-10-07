@@ -1,136 +1,42 @@
-# RCM Validation Data
+# RCM Experiment Recordings
 
-This directory contains the retained kinematic-consistency scans and the five
-standard Studio Sim RCM runs. Pilot, superseded, offline-generated, and failed
-experiments have been removed.
+## Current directories
 
-CSV files are ignored by the repository's root `.gitignore`; they remain local
-unless explicitly force-added or published separately as a dataset.
+| Path | Contents |
+|---|---|
+| `new_tcp/basic/` | Basic recordings with the new TCP: 20 CSV files and 20 matching metadata JSON files, recorded on 2026-09-29, 2026-10-05, 2026-10-07 |
+| `kinematics_validation/` | Kinematic validation: `sdk_kdl_fk_scan.csv` contains the earlier SDK/KDL comparison; `sdk_kdl_fk_scan_calibrated.csv` contains the calibrated KDL comparison |
+| `archive/` | Earlier standard experiments, insertion demonstrations, and insertion pilot experiments; see the local `archive/README.md` for individual runs |
 
-## Kinematic consistency
+This inventory reflects local files as of 2026-10-07. Experiment data are not distributed with the repository; a fresh clone may not contain these directories or CSV files.
 
-- `sdk_kdl_fk_scan.csv`
-  - Nominal xArm7 KDL model compared with xArm SDK FK.
-  - 143 configurations.
-  - Position RMS: 10.120 mm.
-  - Rotation RMS: 2.730 deg.
+## Starting basic recording
 
-- `sdk_kdl_fk_scan_calibrated.csv`
-  - Robot-specific calibrated KDL model compared with xArm SDK FK.
-  - 143 configurations.
-  - Position RMS: 0.027 mm.
-  - Rotation RMS: 0.012 deg.
-
-These results measure numerical consistency with the SDK, not physical
-robot accuracy.
-
-## Repeated Studio Sim RCM experiment
-
-Formal data:
-
-`studio_calibrated_standard/full_stick_0p5_deg_s/`
-
-Protocol:
-
-- Studio Sim mode.
-- Physical robot remained stationary.
-- Initial joints: `[0, -40, 0, 75, 0, 115.1, 1.5]` deg.
-- Robot-specific calibrated KDL model.
-- RCM insertion disabled.
-- Right stick fully deflected in one direction.
-- Command duration: approximately 5 seconds.
-- Maximum angular speed: 0.5 deg/s.
-- Speed scale: 0.75.
-- Expected stable command: 0.375 deg/s.
-- Stable samples selected above 0.36 deg/s.
-- Five repeated runs.
-
-Combined stable-period results:
-
-- Samples: 625.
-- Mean RCM error: 0.000189 mm.
-- Combined RMS RCM error: 0.000284 mm.
-- Maximum RCM error: 0.003061 mm.
-- Limited samples: 0.
-
-These RCM errors are calculated from calibrated KDL and SDK joint
-feedback. They do not represent externally measured physical RCM
-accuracy.
-
-## Retained directory structure
-
-```text
-rcm_logs/
-├── README.md
-├── sdk_kdl_fk_scan.csv
-├── sdk_kdl_fk_scan_calibrated.csv
-└── studio_calibrated_standard/
-    └── full_stick_0p5_deg_s/
-        ├── run_01/ ... run_05/   # one raw CSV per run
-        └── analysis/
-            └── run_summary.csv
-```
-
-`run_summary.csv` contains one summary row for each retained run.
-
-## Compact RCM logging
-
-New experiments use one compact logger. Start the teleoperation node first and
-confirm that `/neuro_final/rcm_diagnostics` is being published. Then open a
-second terminal and run:
+Source the ROS 2 and workspace environments, then start the logger before entering RCM mode:
 
 ```bash
-cd /home/yunbing/NeuroMill_Final
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
-
 ros2 run neuro_final_teleop rcm_diagnostics_logger --ros-args \
-  -p output_dir:=/home/yunbing/NeuroMill_Final/rcm_logs/compact_runs/run_01
+  -p log_mode:=basic \
+  -p output_dir:=/home/yunbing/NeuroMill_Final/rcm_logs/new_tcp/basic
 ```
 
-Press `Ctrl+C` in the logger terminal after the experiment. The logger prints a
-summary and saves one timestamped CSV file in the selected output directory.
+Each successful RCM capture creates a CSV and a matching metadata JSON file. Exiting RCM closes the session; another capture creates new files. Ctrl+C closes any active recording.
 
-Each new compact CSV contains only these 13 fields:
+## CSV fields
 
-```text
-time_s
-lateral_error_mm
-desired_angular_speed_rad_s
-achieved_angular_speed_rad_s
-angular_error_rad_s
-requested_insertion_mm_s
-target_insertion_mm_s
-achieved_insertion_mm_s
-insertion_depth_mm
-max_joint_speed_rad_s
-travel_limited
-joint_velocity_limited
-joint_acceleration_limited
-```
+- `elapsed_s`: elapsed time since the first recorded sample, in seconds.
+- `lateral_error_mm`: model-derived distance from the fixed entry point to the tool shaft axis, in millimetres.
+- `tcp_x_mm`, `tcp_y_mm`, `tcp_z_mm`: model TCP position in the robot base frame, in millimetres.
+- `q1_deg` through `q7_deg`: encoder feedback joint angles, in degrees.
 
-The three insertion values have different meanings:
+The matching `_metadata.json` records the captured entry point, controller TCP, model configuration, units, and data sources. Keep it together with its CSV. Historical metadata preserves the configuration used at recording time and should not be rewritten to match the current code.
 
-- `requested`: operator command before travel limiting.
-- `target`: command after slowdown and travel limiting.
-- `achieved`: motion produced after the hierarchical solver and joint limits.
+The current controller uses the configured physical TCP without an additional software virtual-tip offset. CSV RCM errors describe model consistency; independent optical measurements are needed to validate physical accuracy.
 
-## Analyzing one compact CSV
+## File naming
 
-From the workspace root, pass one compact CSV path to the analyzer:
+`rcm_basic_20261005_151806_139375.csv` indicates the basic format, the date 2026-10-05, the time 15:18:06, and a microsecond component used to distinguish files. Its matching JSON shares the same timestamp.
 
-```bash
-cd /home/yunbing/NeuroMill_Final
+## Git rules
 
-python3 src/neuro_final_teleop/experiments/analyze_compact_rcm_csv.py \
-  rcm_logs/compact_runs/run_01/rcm_YYYYMMDD_HHMMSS.csv
-```
-
-The analyzer reports sample count and rate, RCM mean/RMS/95th-percentile/maximum
-error, mean angular and insertion tracking errors, insertion depth range,
-maximum joint speed, and the three limiter counts. It reads the CSV without
-modifying it or creating derived files.
-
-The retained `studio_calibrated_standard` files use the previous detailed CSV
-schema. They document the completed rotation-only experiment but are not input
-for `analyze_compact_rcm_csv.py`.
+Everything under `rcm_logs/` except this README is ignored by Git, including CSV files, metadata, plots, and archive documentation. Ignore rules do not delete local data.

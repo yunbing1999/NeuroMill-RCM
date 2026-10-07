@@ -2,7 +2,7 @@
 
 NeuroMill Final is a ROS 2 Jazzy workspace for teleoperating a UFACTORY xArm7
 with a PS5 DualSense controller. It includes free Cartesian teleoperation,
-fixed-tip control, two-level remote-center-of-motion (RCM) control, bounded
+fixed-tip control, two-level remote-center-of-motion (RCM) control, speed-limited
 insertion and withdrawal, force/torque safety, haptic feedback, diagnostics,
 and experiment logging.
 
@@ -22,8 +22,8 @@ P2: operator rotation and insertion/withdrawal at equal priority
 ```
 
 P2 is solved inside the null space of P1. Joint velocity and acceleration
-limits are applied afterward. Insertion includes positive and negative travel
-limits plus a soft slowdown zone near each boundary.
+limits are applied afterward. Insertion/withdrawal speed is limited, but cumulative
+depth limits and depth-boundary slowdown are currently disabled.
 
 The current controller assumes that the drill shaft is parallel to the modeled
 tool `+Z` axis. This assumption has not yet been fully validated against the
@@ -46,7 +46,7 @@ Important package files:
 ```text
 src/neuro_final_teleop/
 ├── config/                         Runtime parameter profiles
-├── experiments/                    Offline analysis scripts
+├── experiments/                    SDK/KDL validation scripts
 ├── launch/                         ROS 2 launch files
 ├── neuro_final_teleop/
 │   ├── neuro_final_teleop.py       Main node and parameters
@@ -86,16 +86,22 @@ sudo apt update
 sudo apt install -y \
   python3-colcon-common-extensions \
   python3-pip \
+  python3-venv \
+  python3-rosdep \
   python3-pykdl \
   ros-jazzy-robot-state-publisher \
   ros-jazzy-rviz2 \
   ros-jazzy-xacro
 
+# Use a ROS-compatible Python environment. On Ubuntu 24.04, a venv avoids
+# modifying the externally managed system Python installation.
+python3 -m venv --system-site-packages ~/venvs/neuromill
+source ~/venvs/neuromill/bin/activate
 python3 -m pip install -r requirements.txt
 rosdep update
-rosdep install --from-paths src --ignore-src -r -y
+rosdep install --from-paths src/neuro_final_teleop src/external/xarm_description --ignore-src -r -y
 
-colcon build --symlink-install
+colcon build --packages-select xarm_description neuro_final_teleop
 source install/setup.bash
 ```
 
@@ -120,7 +126,8 @@ colcon build \
 source install/setup.bash
 ```
 
-Every new terminal must source both ROS and the workspace:
+Every new terminal must source both ROS and the workspace. If installed into the
+venv above, activate it in each terminal as well (before building/running):
 
 ```bash
 source /opt/ros/jazzy/setup.bash
@@ -163,8 +170,9 @@ They were exported from the xArm controller through
 `gen_kinematics_params.py`, which reads 42 controller-resident values
 (`7 joints × [x, y, z, roll, pitch, yaw]`) over TCP port 502.
 
-At runtime the YAML is loaded only into the local `KDLKinModel`; it is not
-written back to the controller:
+At runtime teleop loads this YAML into the local `KDLKinModel`; the current
+visualization launch also selects this calibration. Neither writes it back to
+the controller:
 
 ```text
 xArm controller calibration
@@ -178,42 +186,97 @@ Tip-Lock and RCM solvers
 
 The active UFACTORY controller TCP offset is read separately from
 `arm.tcp_offset`. Its XYZ translation is applied to local KDL FK and the tool
-Jacobian.
+Jacobian. TCP RPY is also applied to the modeled tool orientation and shaft axis.
+No additional virtual-tip offset is supported.
 
-Startup validation currently compares **TCP position only** between SDK and
-KDL. A small validation error proves numerical consistency between the two
+Startup validation gates constrained modes using TCP position agreement between
+SDK and KDL, and separately reports orientation error as a diagnostic. A small validation error proves numerical consistency between the two
 models at that pose; it does not prove physical drill-tip or drill-axis
 accuracy. TCP orientation and the physical shaft direction require separate
 multi-pose and physical validation.
 
-## Recommended Studio Sim RCM Run
+## Current RCM Experiment Startup
 
-First put UFACTORY Studio in **Sim** mode. Then start the node with conservative
-values. The calibrated kinematics path and controller TCP must match the setup
-being tested.
+Stop duplicate nodes before starting. In every terminal:
 
 ```bash
 cd /home/yunbing/NeuroMill_Final
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
-
-ros2 run neuro_final_teleop neuro_final_teleop --ros-args \
-  --params-file /home/yunbing/NeuroMill_Final/src/neuro_final_teleop/config/neuro_final_default.yaml \
-  -p robot_ip:=192.168.1.243 \
-  -p kinematics_yaml:=/home/yunbing/NeuroMill_Final/src/external/xarm_description/config/kinematics/user/xarm7_kinematics_neuromill_check.yaml \
-  -p require_simulation_robot:=false \
-  -p v7_rcm_enable:=true \
-  -p v7_rcm_insertion_enable:=true \
-  -p v7_rcm_max_insertion_mm_s:=1.0 \
-  -p v7_rcm_max_insertion_depth_mm:=5.0 \
-  -p v7_rcm_max_withdrawal_depth_mm:=3.0 \
-  -p v7_rcm_travel_slowdown_mm:=2.0 \
-  -p v7_rcm_max_angular_deg_s:=0.5
 ```
 
-`require_simulation_robot:=false` is used because the SDK has reported
-`Controller simulation mode: False` even while Studio Sim was selected. Always
-confirm the Studio **Sim/Real** selector visually before enabling motion.
+If using the first-time setup venv, also activate ~/venvs/neuromill.
+The following commands use the real robot configuration. They do not enable
+simulation. Match the controller TCP and the display model:
+XYZ = [-36.87, -7.58, 243.61] mm; RPY = [3.52, 2.74, 6.27] degrees.
+
+Run each command in a separate sourced terminal, in this order:
+
+1. Joint feedback:
+
+   ```bash
+   ros2 run neuro_final_teleop joint_state_bridge --ros-args -p robot_ip:=192.168.1.243
+   ```
+
+2. Calibrated robot, sensor, holder and approximate drill model:
+
+   ```bash
+   ros2 launch neuro_final_teleop rcm_sensor_view.launch.py mount_yaw_deg:=-78.382 shaft_length_m:=0.10 shaft_diameter_m:=0.005
+   ```
+
+3. RViz:
+
+   ```bash
+   rviz2 -d /home/yunbing/NeuroMill_Final/src/neuro_final_teleop/rviz/neuro_final.rviz
+   ```
+
+4. Force/torque bridge (auto-zero is enabled by default; start without contact):
+
+   ```bash
+   ros2 run neuro_final_teleop ft_bridge --ros-args -p robot_ip:=192.168.1.243 -p publish_hz:=100.0
+   ```
+
+5. RCM markers and summary:
+
+   ```bash
+   ros2 run neuro_final_teleop rcm_visualizer --ros-args -p max_trail_points:=15000
+   ```
+
+6. Basic logger, before capturing RCM:
+
+   ```bash
+   ros2 run neuro_final_teleop rcm_diagnostics_logger --ros-args -p log_mode:=basic -p output_dir:=/home/yunbing/NeuroMill_Final/rcm_logs/new_tcp/basic
+   ```
+
+7. Main teleop:
+
+   ```bash
+   ros2 run neuro_final_teleop neuro_final_teleop --ros-args \
+     -r __node:=neuro_final_teleop \
+     --params-file /home/yunbing/NeuroMill_Final/src/neuro_final_teleop/config/neuro_final_default.yaml \
+     -p robot_ip:=192.168.1.243 \
+     -p kinematics_yaml:=/home/yunbing/NeuroMill_Final/src/external/xarm_description/config/kinematics/user/xarm7_kinematics_neuromill_check.yaml \
+     -p require_simulation_robot:=false \
+     -p v7_speed_scale_default:=0.75 \
+     -p v7_rcm_enable:=true \
+     -p v7_rcm_insertion_enable:=true \
+     -p v7_rcm_max_insertion_mm_s:=5.0 \
+     -p v7_rcm_max_angular_deg_s:=2.0
+   ```
+
+8. Optional force-monitoring GUI:
+
+   ```bash
+   ros2 run neuro_final_teleop session_gui
+   ```
+
+Release the deadman and exit RCM before stopping teleop and the logger.
+Each capture gets its own CSV/metadata pair. GUI rosbag recording is separate.
+
+The drill mesh is approximate display geometry, not physical metrology.
+The display TCP is a fixed calibration snapshot; changing the controller TCP
+requires updating the visual model too. TF yellow arrows connect coordinate
+origins, not physical parts; disable TF > Show Arrows to hide them.
 
 ## DualSense Controls
 
@@ -260,14 +323,15 @@ are:
 | `v7_rcm_insertion_enable` | `false` | Allow L2/R2 motion in RCM |
 | `v7_rcm_max_angular_deg_s` | `5.0` | Maximum operator rotation speed |
 | `v7_rcm_max_insertion_mm_s` | `5.0` | Maximum insertion/withdrawal speed |
-| `v7_rcm_max_insertion_depth_mm` | `20.0` | Positive travel limit from capture |
-| `v7_rcm_max_withdrawal_depth_mm` | `10.0` | Negative travel limit from capture |
-| `v7_rcm_travel_slowdown_mm` | `5.0` | Soft slowdown width near a limit |
 | `v7_rcm_correction_gain_s` | `12.0` | P1 error correction gain |
 | `v7_rcm_max_correction_mm_s` | `10.0` | Maximum P1 correction speed |
 | `v7_rcm_damping` | `0.025` | Damped pseudoinverse parameter |
 | `v7_rcm_qdot_limit_rad_s` | `0.40` | Joint velocity limit |
 | `v7_rcm_qddot_limit_rad_s2` | `1.50` | Joint acceleration limit |
+
+Legacy depth-limit and travel-slowdown parameters remain declared, but the
+current depth limiter passes commands through; do not rely on those parameters
+to stop travel. Speed and joint limits remain active.
 
 The characteristic length is currently calculated as:
 
@@ -280,7 +344,7 @@ Consequently, changing either maximum speed also changes the relative scaling
 inside P2. This coupling is under evaluation and should be considered when
 interpreting rotation-tracking results.
 
-## Compact RCM Diagnostics
+## Basic RCM Diagnostics
 
 The main node publishes JSON diagnostics on:
 
@@ -298,28 +362,13 @@ ros2 topic echo \
   --full-length
 ```
 
-Start the compact logger in a second sourced terminal:
+Start the basic logger before capturing RCM in a sourced terminal:
 
-```bash
-cd /home/yunbing/NeuroMill_Final
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
+    ros2 run neuro_final_teleop rcm_diagnostics_logger --ros-args -p log_mode:=basic -p output_dir:=/home/yunbing/NeuroMill_Final/rcm_logs/new_tcp/basic
 
-ros2 run neuro_final_teleop rcm_diagnostics_logger --ros-args \
-  -p output_dir:=/home/yunbing/NeuroMill_Final/rcm_logs/compact_runs/run_01
-```
-
-Stop it with `Ctrl+C`. It writes a timestamped CSV and prints a summary.
-
-Analyze one compact CSV:
-
-```bash
-python3 src/neuro_final_teleop/experiments/analyze_compact_rcm_csv.py \
-  rcm_logs/compact_runs/run_01/rcm_YYYYMMDD_HHMMSS.csv
-```
-
-See [rcm_logs/README.md](rcm_logs/README.md) for the 13 CSV fields, retained
-experiments, metric definitions, and interpretation limits.
+Each successful RCM capture creates a basic CSV and metadata JSON. Exiting RCM
+closes the session; Ctrl+C closes any active file. See
+[rcm_logs/README.md](rcm_logs/README.md) for the schema and data-source conventions.
 
 The reported lateral RCM error is computed from encoder joint feedback and the
 same calibrated KDL model used by the controller. It is useful for controller
@@ -335,9 +384,11 @@ tracking or a measured entry-point fixture.
 | `ft_bridge` | Publish xArm force/torque data |
 | `joint_state_bridge` | Publish `/joint_states` |
 | `session_gui` | FT/haptic monitoring and rosbag recording |
-| `rcm_diagnostics_logger` | Record compact RCM CSV data |
+| `rcm_diagnostics_logger` | Record capture-scoped basic RCM CSV data |
+| `rcm_visualizer` | Publish captured entry coordinates, trajectory and error summary |
 
-The normal non-RCM launch is:
+The generic teleop launch is below. It does not reproduce the calibrated RCM
+experiment overrides above and does not start the RCM logger or visualizer:
 
 ```bash
 ros2 launch neuro_final_teleop teleop.launch.py \
@@ -393,11 +444,16 @@ colcon build \
   --packages-select neuro_final_teleop
 ```
 
+The full controller test file still contains historical depth-limit assertions
+that conflict with the current unlimited-depth behavior. These tests need updating;
+a full-suite pass is not currently claimed. The basic CSV and visualizer tests are
+in test_basic_csv.py and test_rcm_visualizer.py.
+
 ## Known Limitations and Open Validation Work
 
 - SDK-versus-KDL agreement proves model consistency, not absolute physical
   accuracy.
-- Startup kinematic validation currently checks TCP XYZ only, not orientation.
+- Startup validation gates on TCP position; orientation error is diagnostic only.
 - The solver currently assumes the physical shaft is aligned with tool `+Z`.
 - The physical drill-axis offset must be measured and incorporated before
   claiming physical RCM accuracy.
@@ -425,3 +481,6 @@ Before pushing:
 git diff --check
 git status --short
 ```
+
+Experiment outputs under rcm_logs/ are ignored by Git except rcm_logs/README.md.
+Keep raw CSV and metadata pairs together locally.

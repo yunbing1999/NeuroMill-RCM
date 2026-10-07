@@ -809,6 +809,11 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
             "/neuro_final/rcm_diagnostics",
             10,
         )
+        self._v7_rcm_log_event_pub = self.create_publisher(
+            String,
+            "/neuro_final/rcm_log_event",
+            10,
+        )
         self._v7_last_rcm_diag_s = 0.0
 
         if not self.dry_run:
@@ -871,8 +876,53 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
         )
         self.add_on_set_parameters_callback(self._on_haptic_eval_parameter_change)
 
-    def _publish_rcm_diagnostics(self, result, desired_w, joints):
-        """Publish compact RCM measurements at a maximum of 25 Hz."""
+    def _publish_rcm_log_event(self, event, entry_point_m=None, reason=""):
+        """Publish RCM capture/exit events used by capture-scoped loggers."""
+
+        data = {
+            "event": str(event),
+            "reason": str(reason),
+        }
+        if event == "start" and entry_point_m is not None:
+            tcp_offset = (self._robot_tcp_offset_list() + [0.0] * 6)[:6]
+            cfg = self._v7_rcm_controller.cfg
+            data.update({
+                "captured_rcm_point_base_mm": [
+                    float(value) * 1000.0 for value in entry_point_m[:3]
+                ],
+                "tcp_offset_mm_deg": [float(value) for value in tcp_offset],
+                "effective_tcp_translation_mm": [
+                    float(value)
+                    for value in self._effective_tcp_translation_mm()
+                ],
+                "model_configuration": {
+                    "kinematics": (
+                        "calibrated KDL"
+                        if self.kinematics_yaml
+                        else "nominal xArm7 KDL"
+                    ),
+                    "kinematics_yaml": self.kinematics_yaml,
+                    "rcm_solver": "two-level hierarchical velocity solver",
+                    "damping": float(cfg.damping),
+                    "characteristic_length_m": float(
+                        cfg.characteristic_length_m
+                    ),
+                    "shaft_axis_sign": float(cfg.shaft_axis_sign),
+                },
+            })
+
+        msg = String()
+        msg.data = json.dumps(data, separators=(",", ":"))
+        self._v7_rcm_log_event_pub.publish(msg)
+
+    def _publish_rcm_diagnostics(
+        self,
+        result,
+        desired_w,
+        joints,
+        tcp_pose_mm_deg,
+    ):
+        """Publish RCM diagnostics at a maximum of 25 Hz."""
 
         now = self.get_clock().now().nanoseconds / 1e9
         if now - self._v7_last_rcm_diag_s < 0.04:
@@ -884,6 +934,11 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
 
         data = {
             "time_s": now,
+            "frame_id": "link_base",
+            "tool_position_mm": result.tool_position_mm,
+            "shaft_axis_base": result.shaft_axis_base,
+            "entry_point_mm": result.entry_point_mm,
+            "shaft_point_mm": result.shaft_point_mm,
             "lateral_error_mm": result.lateral_error_mm,
             "desired_angular_speed_rad_s": math.sqrt(sum(v * v for v in desired_w)),
             "achieved_angular_speed_rad_s": math.sqrt(sum(v * v for v in achieved_w)),
@@ -898,6 +953,14 @@ class NeuroFinalTeleopNode(ForceHapticsMixin, MotionModesMixin, TeleopV4Node):
             "travel_limited": result.travel_limited,
             "joint_velocity_limited": result.joint_velocity_limited,
             "joint_acceleration_limited": result.joint_acceleration_limited,
+            # Basic logging reuses the same feedback joint sample and the
+            # calibrated-KDL TCP pose already evaluated by this control cycle.
+            "tcp_position_mm": [
+                float(value) for value in tcp_pose_mm_deg[:3]
+            ],
+            "joints_deg": [
+                math.degrees(float(value)) for value in joints[:7]
+            ],
         }
 
         msg = String()

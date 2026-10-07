@@ -1,68 +1,50 @@
 # neuro_final_teleop
 
-This is the main NeuroFinal ROS 2 package. It provides PS5 DualSense teleoperation, xArm connection, fixed-tip behavior, force/torque haptics, bridge nodes, GUI tools, configs, and launch files.
+Main ROS 2 Jazzy package for xArm7 DualSense teleoperation, fixed-tip and RCM
+control, force feedback, basic CSV recording, and drill visualization.
+See the [workspace README](../../README.md) for the current separate-terminal startup.
 
-For first-time setup and normal run commands, start with the workspace-level `README.md`.
+## Package map
 
-## Package Map
+| Path | Responsibility |
+|---|---|
+| neuro_final_teleop/neuro_final_teleop.py | Main node, parameters, controllers, diagnostics and capture events |
+| neuro_final_teleop/motion_modes.py | Operator input, free/fixed-tip/RCM transitions and motion requests |
+| neuro_final_teleop/force_haptics.py | Force processing, contact feedback and haptic output |
+| neuro_final_teleop/control/ | KDL, solvers, state machine and protection helpers |
+| neuro_final_teleop/input/ | DualSense backend and pygame fallback implementation |
+| neuro_final_teleop/nodes/ | Independent bridge, GUI, logger and visualization nodes |
+| neuro_final_teleop/drill_mesh.py | Continuous display-only drill mesh generation |
+| neuro_final_teleop/assets/ | Controller-guide image |
+| config/ | Default and alternative runtime parameter profiles |
+| launch/ | Generic, visualization and playback launches |
+| urdf/ | Calibrated robot/sensor/holder/drill display assembly |
+| meshes/milling/ | Active static meshes |
+| meshes/archive/ | Original reference meshes, not installed |
+| rviz/ | RViz display configuration |
+| experiments/ | SDK/KDL comparison tools; results go to rcm_logs/kinematics_validation |
+| test/ | Unit and dry-run regression checks |
 
-```text
-neuro_final_teleop/
-  package.xml
-  setup.py
-  config/
-  launch/
-  neuro_final_teleop/
-    neuro_final_teleop.py
-    motion_modes.py
-    force_haptics.py
-    control/
-    input/
-    nodes/
-    assets/
-  test/
-```
+## Installed executable entry points
 
-## Entry Points
+- neuro_final_teleop: main control node.
+- ft_bridge: force/torque topic and tare service.
+- joint_state_bridge: encoder feedback as joint states.
+- session_gui: force monitoring, haptic controls and rosbag recording.
+- rcm_diagnostics_logger: basic CSV and metadata per capture.
+- rcm_visualizer: RCM entry coordinates, trajectory and summary markers.
 
-These are installed by `setup.py` and can be run with `ros2 run`.
+## Current behavior
 
-```text
-neuro_final_teleop    Main robot teleop node.
-ft_bridge             Publishes xArm force/torque data and provides tare service.
-joint_state_bridge    Publishes xArm joint states.
-session_gui           Live monitor, haptic controls, and rosbag recorder.
-```
+Controller TCP translation and rotation are used with the selected KDL model.
+Software virtual-tip offsets and compact CSV output have been removed.
+Insertion depth limits are disabled; insertion speed, joint velocity and
+acceleration limits remain. Fixed-tip mode remains available.
 
-## Launch Files
+Use rcm_sensor_view.launch.py for the current model. system.launch.py has an
+unresolved ZED include reference and is not the recommended startup path.
+Generic teleop.launch.py does not apply the full experiment overrides.
+Playback uses ROS bags, not the basic CSV files.
 
-```text
-launch/teleop.launch.py       FT bridge, joint bridge, teleop, and GUI.
-launch/bridge_only.launch.py  FT bridge and joint bridge only.
-launch/system.launch.py       Robot model, ZED, RViz, bridges, teleop, and GUI.
-launch/playback.launch.py     RViz and GUI support for recorded bag playback.
-```
-
-## Config Files
-
-```text
-config/neuro_final_default.yaml   Normal operation values.
-config/neuro_final_safe.yaml      Slower safety-focused values.
-config/neuro_final_drilling.yaml  Drilling-practice values.
-```
-
-The YAML files are keyed by the ROS node name `neuro_final_teleop`. Direct `ros2 run` commands should either use that node name or remap `__node` to it.
-
-## Runtime Responsibilities
-
-`neuro_final_teleop.py` creates the ROS node, loads parameters, connects to xArm, starts the DualSense input layer, and wires the main timer loop.
-
-`motion_modes.py` handles operator intent: base-frame free motion, R3/Cross fixed-tip entry, right-stick fixed-tip movement, speed scale changes, depth commands, and button actions.
-
-`force_haptics.py` handles FT interpretation: filtering, tare logic, contact estimation, haptic output, debug publishing, and force guard behavior.
-
-`control/` contains reusable math, kinematics, safety, state-machine, and fixed-point control pieces.
-
-`input/` contains the PS5 DualSense layer and a pygame fallback input layer.
-
-`nodes/` contains independent ROS nodes used during live runs and recorded-session workflows.
+Some historical depth-limit tests still require updates. Display geometry and
+model-derived errors are not independent physical accuracy measurements.

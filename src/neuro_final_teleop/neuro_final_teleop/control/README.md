@@ -33,3 +33,18 @@ Rate limiting, joint-risk checks, and safety helper classes.
 `state_machine.py`
 
 Explicit teleop state machine with allowed transitions for idle, free teleop, fixed-tip capture/active states, alignment, and fault recovery.
+
+## RCM controller and current limits
+
+rcm_controller.py implements captured entry-point geometry and a two-level
+joint-velocity solver: lateral RCM correction first, operator rotation/insertion
+second. Cumulative depth limits and boundary slowdown are disabled; speed and
+joint acceleration/velocity limits remain active.
+
+kinematics.py applies controller TCP translation and RPY rotation with the
+selected KDL model. No software virtual-tip offset is added. Position validation
+gates constrained modes; orientation mismatch is reported diagnostically.
+
+The state machine includes RCM capture/active states. Fixed-tip functionality is
+separate from RCM and remains supported. Historical depth-limit assertions in
+test_rcm_controller.py still need updating to match the current behavior.

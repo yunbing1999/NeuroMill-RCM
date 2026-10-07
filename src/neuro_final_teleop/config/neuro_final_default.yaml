@@ -6,6 +6,11 @@ neuro_final_teleop:
     velocity_watchdog_s: 0.0
     input_filter_alpha: 0.85
     input_release_alpha: 1.0
+    # Joystick direction: +1 keeps input direction; -1 reverses it.
+    lx_sign: -1.0
+    ly_sign: 1.0
+    rx_sign: -1.0
+    ry_sign: -1.0
     v7_deadman_button: circle
     v7_speed_scale_default: 0.75
     v7_speed_scale_min: 0.15

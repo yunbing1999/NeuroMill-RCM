@@ -14,7 +14,7 @@ KINEMATICS_YAML = Path(
 )
 
 OUTPUT_CSV = Path(
-    "rcm_logs/sdk_kdl_fk_scan_calibrated.csv"
+    "rcm_logs/kinematics_validation/sdk_kdl_fk_scan_calibrated.csv"
 )
 
 

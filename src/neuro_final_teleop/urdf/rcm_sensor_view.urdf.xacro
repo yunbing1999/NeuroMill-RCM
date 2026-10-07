@@ -1,0 +1,109 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="neuromill_sensor_view">
+  <!-- Display geometry only: adapter + sensor represented by one cylinder.
+       User measured total height 56 mm; diameter approximately 72 mm.
+       No mass/collision or control configuration is inferred from this model. -->
+  <xacro:arg name="drill_mesh_uri" default="package://neuro_final_teleop/meshes/milling/drill_continuous_m.stl"/>
+  <xacro:arg name="shaft_length_m" default="0.10"/>
+  <xacro:arg name="shaft_diameter_m" default="0.005"/>
+  <xacro:arg name="mount_yaw_deg" default="-78.382"/>
+  <xacro:arg name="sensor_height_m" default="0.056"/>
+  <xacro:arg name="sensor_diameter_m" default="0.072"/>
+  <xacro:include filename="$(find xarm_description)/urdf/xarm_device.urdf.xacro"/>
+  <!-- Shared silver material defined before every drill visual reference. -->
+  <material name="drill_steel"><color rgba="0.72 0.74 0.76 1"/></material>
+  <link name="ft_sensor_visual">
+    <visual>
+      <origin xyz="0 0 ${float('$(arg sensor_height_m)') / 2}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${float('$(arg sensor_diameter_m)') / 2}"
+                  length="$(arg sensor_height_m)"/>
+      </geometry>
+      <material name="sensor_silver"><color rgba="0.65 0.68 0.72 1"/></material>
+    </visual>
+  </link>
+  <joint name="flange_to_ft_sensor_visual" type="fixed">
+    <parent link="link_eef"/><child link="ft_sensor_visual"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <link name="sensor_mount_face"/>
+  <joint name="ft_sensor_to_mount_face" type="fixed">
+    <parent link="ft_sensor_visual"/><child link="sensor_mount_face"/>
+    <origin xyz="0 0 $(arg sensor_height_m)" rpy="0 0 0"/>
+  </joint>
+  <!-- Source: Mount_Milling_xArm.stp, both holder solids.
+       Mesh coordinates are metres, origin at confirmed four-hole contact face.
+       Yaw is only a TCP-radial initial estimate, NOT measured bolt indexing. -->
+  <link name="milling_mount_visual">
+    <visual>
+      <geometry>
+        <mesh filename="package://neuro_final_teleop/meshes/milling/mount_sensor_frame_m.stl" scale="1 1 1"/>
+      </geometry>
+      <material name="printed_mount_black"><color rgba="0.12 0.12 0.12 1"/></material>
+    </visual>
+  </link>
+  <joint name="sensor_to_milling_mount_visual" type="fixed">
+    <parent link="sensor_mount_face"/><child link="milling_mount_visual"/>
+    <origin xyz="0 0 0" rpy="0 0 ${float('$(arg mount_yaw_deg)') * pi / 180}"/>
+  </joint>
+  <!-- Approximate exposed shaft only, not manufacturer EMAX2PLUS CAD.
+       TCP calibration snapshot in flange frame; sensor height is already included.
+       Local +Z points toward TCP; the shaft extends backwards from its endpoint. -->
+  <link name="drill_shaft_visual"/>
+  <joint name="flange_to_drill_shaft_visual" type="fixed">
+    <parent link="link_eef"/><child link="drill_shaft_visual"/>
+    <origin xyz="-0.03687 -0.00758 0.24361"
+            rpy="${3.52*pi/180} ${2.74*pi/180} ${6.27*pi/180}"/>
+  </joint>
+  <!-- Display-only sleeve. Holder bore axis from STEP cylindrical faces:
+       CAD direction (0,-cos(20deg),sin(20deg)), transformed to mount frame.
+       The final transition bridges to the calibrated shaft without moving TCP. -->
+  <xacro:property name="ma" value="${float('$(arg mount_yaw_deg)')*pi/180}"/>
+  <xacro:property name="hx" value="${0.033638*sin(ma)}"/>
+  <xacro:property name="hy" value="${-0.033638*cos(ma)}"/>
+  <xacro:property name="hz" value="${float('$(arg sensor_height_m)')+0.062247}"/>
+  <xacro:property name="ux" value="${-sin(20*pi/180)*sin(ma)}"/>
+  <xacro:property name="uy" value="${sin(20*pi/180)*cos(ma)}"/>
+  <xacro:property name="uz" value="${cos(20*pi/180)}"/>
+  <xacro:property name="sl" value="${float('$(arg shaft_length_m)')}"/>
+  <xacro:property name="dx" value="${cos(6.27*pi/180)*sin(2.74*pi/180)*cos(3.52*pi/180)+sin(6.27*pi/180)*sin(3.52*pi/180)}"/>
+  <xacro:property name="dy" value="${sin(6.27*pi/180)*sin(2.74*pi/180)*cos(3.52*pi/180)-cos(6.27*pi/180)*sin(3.52*pi/180)}"/>
+  <xacro:property name="dz" value="${cos(2.74*pi/180)*cos(3.52*pi/180)}"/>
+  <xacro:property name="bx" value="${-0.03687-sl*dx}"/>
+  <xacro:property name="by" value="${-0.00758-sl*dy}"/>
+  <xacro:property name="bz" value="${0.24361-sl*dz}"/>
+  <xacro:property name="extension" value="${max(0.015,(bx-hx)*ux+(by-hy)*uy+(bz-hz)*uz)}"/>
+  <xacro:macro name="sleeve_segment" params="ax ay az bx by bz radius">
+    <visual>
+      <origin xyz="${(ax+bx)/2} ${(ay+by)/2} ${(az+bz)/2}"
+              rpy="0 ${atan2(sqrt((bx-ax)**2+(by-ay)**2),bz-az)} ${atan2(by-ay,bx-ax)}"/>
+      <geometry><cylinder radius="${radius}" length="${sqrt((bx-ax)**2+(by-ay)**2+(bz-az)**2)+0.002}"/></geometry>
+      <material name="drill_steel"/>
+    </visual>
+  </xacro:macro>
+  <!-- Photo-proportioned handpiece, approximately 70 x 22 mm, not measured CAD.
+       Its axis is the holder bore, with a narrow collar seated inside the holder. -->
+  <link name="drill_handpiece_visual">
+    <xacro:sleeve_segment ax="${hx-0.045*ux}" ay="${hy-0.045*uy}" az="${hz-0.045*uz}"
+      bx="${hx-0.065*ux}" by="${hy-0.065*uy}" bz="${hz-0.065*uz}" radius="0.0075"/>
+    <xacro:sleeve_segment ax="${hx-0.060*ux}" ay="${hy-0.060*uy}" az="${hz-0.060*uz}"
+      bx="${hx-0.1195*ux}" by="${hy-0.1195*uy}" bz="${hz-0.1195*uz}" radius="0.011"/>
+    <visual>
+      <origin xyz="${hx-0.1195*ux} ${hy-0.1195*uy} ${hz-0.1195*uz}"/>
+      <geometry><sphere radius="0.011"/></geometry><material name="drill_steel"/>
+    </visual>
+  </link>
+  <joint name="flange_to_drill_handpiece_visual" type="fixed">
+    <parent link="link_eef"/><child link="drill_handpiece_visual"/>
+  </joint>
+  <!-- Single surface covers neck and shaft to TCP, avoiding intersecting solids. -->
+  <link name="drill_coupling_visual">
+    <visual>
+      <geometry><mesh filename="$(arg drill_mesh_uri)"/></geometry>
+      <material name="drill_steel"/>
+    </visual>
+  </link>
+  <joint name="flange_to_drill_coupling_visual" type="fixed">
+    <parent link="link_eef"/><child link="drill_coupling_visual"/>
+  </joint>
+</robot>

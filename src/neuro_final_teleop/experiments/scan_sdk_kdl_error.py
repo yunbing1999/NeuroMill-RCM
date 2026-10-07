@@ -19,7 +19,7 @@ from neuro_final_teleop.control.math_utils import (
 from scipy.spatial.transform import Rotation
 
 ROBOT_IP = "192.168.1.243"
-OUTPUT_CSV = Path("rcm_logs/sdk_kdl_fk_scan.csv")
+OUTPUT_CSV = Path("rcm_logs/kinematics_validation/sdk_kdl_fk_scan.csv")
 JOINT_CHANGES_DEG = (5.0, 10.0, 20.0)
 RANDOM_SAMPLE_COUNT = 100
 RANDOM_CHANGE_DEG = 15.0

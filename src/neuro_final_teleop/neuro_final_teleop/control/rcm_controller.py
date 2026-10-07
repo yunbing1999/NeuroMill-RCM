@@ -39,6 +39,8 @@ class RCMResult:
 
     qdot_rad_s: List[float]
 
+    tool_position_mm: List[float]
+    shaft_axis_base: List[float]
     entry_point_mm: List[float]
     shaft_point_mm: List[float]
     lateral_error_vector_mm: List[float]
@@ -221,25 +223,7 @@ class RCMController:
         speed_m_s: float,
         depth_mm: float,
     ):
-        """Slow or stop insertion near the configured travel limits."""
-
-        if speed_m_s == 0.0:
-            return 0.0, False
-
-        max_in = max(float(self.cfg.max_insertion_depth_mm), 0.0)
-        max_out = max(float(self.cfg.max_withdrawal_depth_mm), 0.0)
-        slowdown = max(float(self.cfg.travel_slowdown_mm), 1e-6)
-
-        remaining = (
-            max_in - depth_mm
-            if speed_m_s > 0.0
-            else depth_mm + max_out
-        )
-
-        if remaining <= 0.0:
-            return 0.0, True
-        if remaining < slowdown:
-            return speed_m_s * remaining / slowdown, True
+        """Pass insertion speed through without depth-based limits."""
         return speed_m_s, False
 
     def _limit_joint_motion(
@@ -505,6 +489,8 @@ class RCMController:
 
         return RCMResult(
             qdot_rad_s=qdot.tolist(),
+            tool_position_mm=(tip * 1000.0).tolist(),
+            shaft_axis_base=shaft_axis.tolist(),
             entry_point_mm=(self._entry_point_m * 1000.0).tolist(),
             shaft_point_mm=(shaft_point * 1000.0).tolist(),
             lateral_error_vector_mm=(lateral_error * 1000.0).tolist(),

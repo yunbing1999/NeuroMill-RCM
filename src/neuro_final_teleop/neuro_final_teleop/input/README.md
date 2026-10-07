@@ -10,6 +10,7 @@ Default PS5 mapping:
 
 ```text
 Circle/R1    Deadman hold
+Options      RCM capture/exit
 Cross        Fixed-tip capture/release
 Square       Force/torque tare
 Triangle     Orthogonal alignment
@@ -25,3 +26,7 @@ D-pad left/right J7 trim when sticks are idle
 `gamepad.py`
 
 Fallback pygame/SDL input layer for generic gamepads. The main NeuroFinal node uses the DualSense layer for normal operation.
+
+In RCM mode the right stick commands constrained rotation and L2/R2 command
+withdrawal/insertion when enabled. Mode handling is in motion_modes.py, not
+only the input backend. Default YAML signs are lx=-1, ly=+1, rx=-1, ry=-1.

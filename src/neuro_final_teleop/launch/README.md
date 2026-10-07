@@ -1,28 +1,26 @@
-# Launch Files
+# Launch files
 
-`teleop.launch.py`
+| File | Current purpose/status |
+|---|---|
+| teleop.launch.py | Generic FT bridge, joint bridge, teleop and GUI; not the full calibrated RCM experiment configuration |
+| bridge_only.launch.py | FT and joint-state bridges only |
+| rcm_sensor_view.launch.py | Current calibrated robot/sensor/holder/drill display via robot_state_publisher; no robot motion commands |
+| playback.launch.py | Robot/ZED visualization, RViz and GUI using simulated ROS time; use with ros2 bag play --clock |
+| system.launch.py | Legacy combined workflow; currently broken because zed_camera_launch is referenced while its definition is commented out |
 
-Starts the normal live teleoperation stack: force/torque bridge, joint-state bridge, main teleop node, and session GUI.
+Use the [workspace README](../../../README.md) for the complete current startup.
+Do not run overlapping generic launches alongside the separate-terminal nodes.
 
-`bridge_only.launch.py`
+## Model parameters
 
-Starts only the xArm force/torque bridge and joint-state bridge. Use this when checking hardware topics before teleoperation.
+rcm_sensor_view.launch.py defaults: sensor_height_m=0.056,
+sensor_diameter_m=0.072, mount_yaw_deg=-78.382, shaft_length_m=0.10,
+shaft_diameter_m=0.005. It selects neuromill_check kinematics, generates a temporary
+continuous drill mesh and loads the display xacro.
 
-`system.launch.py`
+Mount yaw and drill shape are approximate display geometry. TCP is a fixed
+snapshot in the xacro and is not automatically read from the controller.
 
-Starts the full visualization workflow: robot model, optional ZED launch, optional RViz, bridges, teleop, and GUI. RViz visualizes live or replayed ROS data; it is not a robot simulator.
-
-`playback.launch.py`
-
-Starts RViz, robot model publishing, ZED visualization support, and the session GUI using simulated ROS time. Use it together with `ros2 bag play --clock`.
-
-## Common Commands
-
-```bash
-ros2 launch neuro_final_teleop teleop.launch.py robot_ip:=192.168.1.243
-ros2 launch neuro_final_teleop system.launch.py robot_ip:=192.168.1.243
-ros2 launch neuro_final_teleop bridge_only.launch.py robot_ip:=192.168.1.243
-ros2 launch neuro_final_teleop playback.launch.py
-```
-
-The `teleop.launch.py` and `system.launch.py` files also accept `debug_topic_enable`, `trigger_enable`, and `rumble_enable` arguments for haptic/debug channel selection.
+Playback still requires ZED description assets and does not replay basic CSV.
+The generic teleop/system definitions expose debug_topic_enable, trigger_enable
+and rumble_enable arguments; this does not resolve the system launch error.

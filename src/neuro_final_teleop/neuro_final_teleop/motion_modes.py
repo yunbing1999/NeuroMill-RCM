@@ -304,6 +304,7 @@ class MotionModesMixin:
                 result,
                 base_w.tolist(),
                 joints_rad[:7],
+                pose,
             )
 
         # Keep six-axis values only for existing diagnostics.
@@ -712,6 +713,11 @@ class MotionModesMixin:
             old == TeleopState.RCM_ACTIVE
             and new != TeleopState.RCM_ACTIVE
         ):
+            if hasattr(self, "_publish_rcm_log_event"):
+                self._publish_rcm_log_event(
+                    "stop",
+                    reason=reason,
+                )
             self._v7_rcm_joint_cmd_rad_s = [0.0] * 7
             self._v7_rcm_controller.reset()
 
@@ -868,10 +874,16 @@ class MotionModesMixin:
             0.0,
         )
 
-        self.sm.transition_to(
+        activated = self.sm.transition_to(
             TeleopState.RCM_ACTIVE,
             "rcm_entry_captured",
         )
+        if activated and hasattr(self, "_publish_rcm_log_event"):
+            self._publish_rcm_log_event(
+                "start",
+                entry_point_m=entry,
+                reason="rcm_entry_captured",
+            )
 
     def _handle_button_actions(self, inp: InputSnapshot):
         st = self.sm.state

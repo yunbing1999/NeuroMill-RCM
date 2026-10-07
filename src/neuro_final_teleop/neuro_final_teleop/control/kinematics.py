@@ -14,8 +14,7 @@ Frame semantics (xArm Python SDK, typical on hardware):
     xyz is the **tool centre point (TCP)** in base frame.  Then
     ``validate_against_sdk`` compares SDK xyz to ``fk_tool()`` using the
     **effective** flange-frame translation
-    ``controller_tcp_xyz + virtual_tip_xyz`` (mm), software-only beyond the
-    controller.
+    ``controller_tcp_xyz`` (mm), read from the controller.
 
     TCP offset orientation is supplied to ``fk_tool`` as an explicit rotation
     matrix.  The full tool pose is therefore
@@ -357,20 +356,11 @@ class KDLKinModel:
     @staticmethod
     def effective_tcp_translation_mm(
         controller_tcp_mm_deg: Optional[List[float]],
-        virtual_tip_offset_mm: Optional[List[float]],
     ) -> List[float]:
-        """Sum controller TCP translation (mm) + software virtual tip (mm).
-
-        Same additive convention as UFACTORY ``tcp_offset`` xyz (flange frame);
-        software-only virtual tip is never written to the controller.
-        """
-        c = [0.0, 0.0, 0.0]
-        v = [0.0, 0.0, 0.0]
+        """Controller TCP translation in flange coordinates, in mm."""
         if controller_tcp_mm_deg is not None and len(controller_tcp_mm_deg) >= 3:
-            c = [float(controller_tcp_mm_deg[i]) for i in range(3)]
-        if virtual_tip_offset_mm is not None and len(virtual_tip_offset_mm) >= 3:
-            v = [float(virtual_tip_offset_mm[i]) for i in range(3)]
-        return [c[i] + v[i] for i in range(3)]
+            return [float(value) for value in controller_tcp_mm_deg[:3]]
+        return [0.0, 0.0, 0.0]
 
     def validate_against_sdk(
         self,
@@ -378,7 +368,6 @@ class KDLKinModel:
         joint_angles_rad: List[float],
         tolerance_mm: float = 2.0,
         tcp_offset_mm_deg: Optional[List[float]] = None,
-        virtual_tip_offset_mm: Optional[List[float]] = None,
         validate_with_tcp: bool = True,
         tcp_rotation: Optional[np.ndarray] = None,
     ) -> ValidationResult:
@@ -386,13 +375,13 @@ class KDLKinModel:
 
         If ``validate_with_tcp`` is False: always ``fk_flange`` vs SDK.
         If effective ``|dx|+|dy|+|dz| <= 1`` mm: flange path.
-        Else ``fk_tool`` with ``(controller+virtual)`` mm converted to metres.
+        Else ``fk_tool`` with ``controller`` mm converted to metres.
 
         Orientation error is diagnostic only and does not affect ``valid``.
         """
         sdk_pos_mm = [float(sdk_pose_mm_deg[i]) for i in range(3)]
         eff_mm = self.effective_tcp_translation_mm(
-            tcp_offset_mm_deg, virtual_tip_offset_mm,
+            tcp_offset_mm_deg,
         )
         sum_eff = abs(eff_mm[0]) + abs(eff_mm[1]) + abs(eff_mm[2])
 
