@@ -59,10 +59,10 @@ def test_pause_retains_snapshot_and_resume_extends_trail():
     assert node.visible and len(node.trail) == 1
     markers = node.publisher.publish.call_args.args[0].markers
     assert all(m.action == Marker.ADD for m in markers)
-    assert 'PAUSED/NO_DATA' in markers[5].text
+    assert 'PAUSED' in markers[5].text
     RCMVisualizer.on_diagnostics(node, message())
     assert len(node.trail) == 2
-    assert 'LIVE' in node.last_markers.markers[5].text
+    assert 'ACTIVE' in node.last_markers.markers[5].text
 
 
 def test_stop_retains_snapshot_until_next_start():
@@ -101,11 +101,12 @@ def test_summary_uses_received_samples_only_and_resets():
     RCMVisualizer.check_stale(node)
     assert node.samples == 2
     text = node.last_markers.markers[5].text
-    assert 'N=2;T=2.0s' in text
-    assert 'Mean=3.500000mm' in text
-    assert 'Max=4.000000mm' in text
-    assert 'RMS=3.535534mm' in text
-    assert ' ' not in text
+    assert 'Samples = 2' in text
+    assert 'Mean error = 3.500000 mm' in text
+    assert 'Max error = 4.000000 mm' in text
+    assert 'RMS error = 3.535534 mm' in text
+    assert 'Latest' not in text
+    assert 'KDL MODEL ONLY' in text
     RCMVisualizer.on_event(node, String(data='{"event":"start"}'))
     assert node.samples == 0 and node.error_max == 0
 
@@ -119,8 +120,8 @@ def test_robot_model_shaft_disables_duplicate_marker():
 def test_summary_shows_captured_entry_not_moving_tcp():
     node = viewer()
     RCMVisualizer.on_diagnostics(node, message())
-    text = node.summary_text('LIVE')
-    assert 'Captured_RCM[link_base]' in text
-    assert 'X=100.000mm' in text
-    assert 'Y=200.000mm' in text
-    assert 'Z=400.000mm' in text
+    text = node.summary_text('ACTIVE')
+    assert 'Captured RCM [link_base]' in text
+    assert 'X = 100.000 mm' in text
+    assert 'Y = 200.000 mm' in text
+    assert 'Z = 400.000 mm' in text

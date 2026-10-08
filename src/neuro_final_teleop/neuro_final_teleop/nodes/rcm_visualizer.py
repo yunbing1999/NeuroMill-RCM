@@ -91,12 +91,12 @@ class RCMVisualizer(Node):
         if self.ended:
             status = 'ENDED'
         elif time.monotonic() - self.last_received > self.timeout:
-            status = 'PAUSED/NO_DATA'
+            status = 'PAUSED'
         else:
-            status = 'LIVE'
+            status = 'ACTIVE'
         label = self.last_markers.markers[5]
         label.text = self.summary_text(status)
-        if status == 'LIVE':
+        if status == 'ACTIVE':
             label.color.r, label.color.g, label.color.b = 0.05, 0.15, 0.2
         else:
             label.color.r, label.color.g, label.color.b = 0.5, 0.22, 0.0
@@ -107,19 +107,16 @@ class RCMVisualizer(Node):
         self.publisher.publish(self.last_markers)
 
     def summary_text(self, status):
-        duration = max(0.0, self.latest_sample_s - self.first_sample_s)
-        # Avoid spaces: some RViz/Ogre font configurations render spaces too wide.
-        return (f'RCM:{status}\n'
-                'Captured_RCM[link_base]\n'
-                f'X={self.entry[0]*1000:.3f}mm\n'
-                f'Y={self.entry[1]*1000:.3f}mm\n'
-                f'Z={self.entry[2]*1000:.3f}mm\n'
-                f'N={self.samples};T={duration:.1f}s\n'
-                f'Latest={self.last_error:.6f}mm\n'
-                f'Mean={self.error_sum / self.samples:.6f}mm\n'
-                f'RMS={math.sqrt(self.error_sq_sum / self.samples):.6f}mm\n'
-                f'Max={self.error_max:.6f}mm\n'
-                'KDL_MODEL_ONLY')
+        return (f'RCM: {status}\n\n'
+                'Captured RCM [link_base]\n'
+                f'X = {self.entry[0]*1000:.3f} mm\n'
+                f'Y = {self.entry[1]*1000:.3f} mm\n'
+                f'Z = {self.entry[2]*1000:.3f} mm\n\n'
+                f'Samples = {self.samples}\n'
+                f'Mean error = {self.error_sum / self.samples:.6f} mm\n'
+                f'RMS error = {math.sqrt(self.error_sq_sum / self.samples):.6f} mm\n'
+                f'Max error = {self.error_max:.6f} mm\n\n'
+                'KDL MODEL ONLY')
 
     def on_diagnostics(self, message):
         if self.ended:
@@ -209,7 +206,7 @@ class RCMVisualizer(Node):
         m = marker(5, Marker.TEXT_VIEW_FACING, (0.05, 0.15, 0.2, 1.0), 0.014)
         m.scale.z = 0.014
         m.pose.position = point([entry[0] + 0.12, entry[1], entry[2] + 0.08])
-        m.text = self.summary_text('LIVE')
+        m.text = self.summary_text('ACTIVE')
         self.last_error = error
         self.last_markers = msg
         self.publisher.publish(msg)
